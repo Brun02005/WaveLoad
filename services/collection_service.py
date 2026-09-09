@@ -1,0 +1,257 @@
+"""Fachada de Collections para la UI.
+
+Compone las tres piezas del motor —el repositorio de collections, el evaluador y
+el repositorio de tracks— y expone lo que un workspace necesita, ya resuelto:
+listar, abrir, editar la pila, guardar, y pedir una página de resultados con sus
+tracks completos.
+
+Existe para que el `CollectionsWorkspace` sea delgado. Sin esta capa, el widget
+terminaría orquestando tres objetos y traduciendo ids a tracks a mano, que es
+justamente la lógica que no tiene que vivir en la UI.
+
+Sin Qt: se testea headless.
+"""
+
+import logging
+from dataclasses import dataclass, replace
+from typing import Optional, Sequence
+
+from domain.collections import (
+    Crate,
+    LayerMode,
+    QueryLayer,
+    SmartCollection,
+    SortSpec,
+)
+from domain.query_ast import Node
+from services.collection_evaluator import CollectionEvaluator, LayerCount
+
+logger = logging.getLogger(__name__)
+
+# Cuántos tracks trae una página. El motor puede devolver el resultado entero,
+# pero una grilla no necesita más que esto de una: ver 4.5 de ARQUITECTURA.md.
+DEFAULT_PAGE_SIZE = 200
+
+
+@dataclass(frozen=True)
+class CollectionPage:
+    """Una página de resultados, con los tracks ya resueltos."""
+    collection: SmartCollection
+    tracks: tuple
+    offset: int
+    page_size: int
+    total: int
+    elapsed_ms: float
+
+    @property
+    def has_more(self) -> bool:
+        return self.offset + len(self.tracks) < self.total
+
+    @property
+    def page_number(self) -> int:
+        """1-indexado, para mostrar."""
+        return self.offset // self.page_size + 1 if self.page_size else 1
+
+    def __len__(self) -> int:
+        return len(self.tracks)
+
+
+class CollectionService:
+    """Todo lo que la UI de Collections necesita, sin que toque el motor directo."""
+
+    def __init__(self, collection_repository, track_repository, evaluator=None):
+        self.repo = collection_repository
+        self.tracks = track_repository
+        self.evaluator = evaluator or CollectionEvaluator(collection_repository.db)
+
+    # --- listado y ciclo de vida -----------------------------------------
+
+    def list_names(self) -> list[tuple[int, str]]:
+        """``(id, nombre)`` para poblar el sidebar sin parsear ningún AST."""
+        return self.repo.list_names()
+
+    def get(self, collection_id: int) -> SmartCollection:
+        return self.repo.get(collection_id)
+
+    def create(self, name: str) -> SmartCollection:
+        """Crea una collection vacía. Vacía significa 'toda la librería'."""
+        return self.repo.save(SmartCollection(name=name))
+
+    def create_unique(self, base_name: str = "Nueva colección") -> SmartCollection:
+        """Crea una collection con un nombre libre, agregando un número si hace falta.
+
+        Es lo que quiere el botón "nueva": no tiene sentido hacerle elegir un
+        nombre al usuario antes de dejarlo ver qué está armando.
+        """
+        nombre = base_name
+        indice = 2
+        while self.repo.exists(nombre):
+            nombre = f"{base_name} {indice}"
+            indice += 1
+        return self.create(nombre)
+
+    def rename(self, collection: SmartCollection, name: str) -> SmartCollection:
+        return self.repo.save(replace(collection, name=name))
+
+    def delete(self, collection_id: int) -> bool:
+        return self.repo.delete(collection_id)
+
+    def duplicate(self, collection: SmartCollection) -> SmartCollection:
+        """Copia una collection con otro nombre. Útil para probar una variante."""
+        copia = replace(
+            collection,
+            id=None,
+            name=self._free_name(f"{collection.name} (copia)"),
+            layers=tuple(replace(layer, id=None) for layer in collection.ordered_layers()),
+        )
+        return self.repo.save(copia)
+
+    def _free_name(self, base: str) -> str:
+        nombre = base
+        indice = 2
+        while self.repo.exists(nombre):
+            nombre = f"{base} {indice}"
+            indice += 1
+        return nombre
+
+    # --- edición de la pila ----------------------------------------------
+    # Todas devuelven la collection ya guardada y releída: la UI dibuja lo que
+    # quedó en la base, no lo que cree que mandó.
+
+    def add_layer(
+        self,
+        collection: SmartCollection,
+        predicate: Node,
+        mode: LayerMode = LayerMode.FILTER,
+    ) -> SmartCollection:
+        return self.repo.save(
+            collection.with_layer(QueryLayer(predicate=predicate, mode=mode))
+        )
+
+    def remove_layer(self, collection: SmartCollection, position: int) -> SmartCollection:
+        return self.repo.save(collection.without_layer(position))
+
+    def toggle_layer(
+        self, collection: SmartCollection, position: int, enabled: bool
+    ) -> SmartCollection:
+        return self.repo.save(collection.with_layer_toggled(position, enabled))
+
+    def move_layer(
+        self, collection: SmartCollection, desde: int, hasta: int
+    ) -> SmartCollection:
+        return self.repo.save(collection.with_layer_moved(desde, hasta))
+
+    def set_sort(
+        self, collection: SmartCollection, sort: Optional[SortSpec]
+    ) -> SmartCollection:
+        return self.repo.save(replace(collection, sort=sort))
+
+    def set_limit(
+        self, collection: SmartCollection, limit: Optional[int]
+    ) -> SmartCollection:
+        return self.repo.save(replace(collection, limit=limit))
+
+    # --- resultados -------------------------------------------------------
+
+    def page(
+        self,
+        collection: SmartCollection,
+        offset: int = 0,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> CollectionPage:
+        """Una página de resultados con los tracks completos, en orden."""
+        resultado = self.evaluator.evaluate(collection, limit=page_size, offset=offset)
+        tracks = self.tracks.get_by_ids(list(resultado.track_ids))
+        total = self.evaluator.count(collection)
+        if collection.limit is not None:
+            # El límite guardado acota el resultado; la paginación no puede
+            # mostrar más allá de eso.
+            total = min(total, collection.limit)
+        return CollectionPage(
+            collection=collection,
+            tracks=tuple(tracks),
+            offset=offset,
+            page_size=page_size,
+            total=total,
+            elapsed_ms=resultado.elapsed_ms,
+        )
+
+    def count(self, collection: SmartCollection) -> int:
+        return self.evaluator.count(collection)
+
+    def layer_counts(self, collection: SmartCollection) -> list[LayerCount]:
+        """El conteo paso a paso.
+
+        **Es la operación más cara del motor** —del orden de las décimas de
+        segundo sobre 50.000 tracks— porque un `COUNT` no puede cortar temprano.
+        La UI tiene que pedirla fuera del hilo de dibujo.
+        """
+        return self.evaluator.layer_counts(collection)
+
+    def warnings(self, collection: SmartCollection) -> list[str]:
+        """Avisos sobre la pila que la UI debería mostrar.
+
+        No son errores: la collection es válida y se evalúa igual. Son cosas que
+        el usuario probablemente no quiso.
+        """
+        avisos: list[str] = []
+        activas = collection.active_layers()
+
+        if activas and activas[0].mode is LayerMode.UNION:
+            avisos.append(
+                "La primera capa suma sobre la librería completa, así que no cambia "
+                "nada: la base ya incluye todo. Movela más abajo o cambiala a filtrar."
+            )
+        if collection.layers and not activas:
+            avisos.append(
+                "Todas las capas están apagadas: el resultado es la librería completa."
+            )
+        if collection.limit is not None and collection.sort is None:
+            avisos.append(
+                f"Hay un límite de {collection.limit} pero no un orden, así que "
+                "cuáles entran queda librado a SQLite. Elegí un orden."
+            )
+        return avisos
+
+    # --- congelar a crate -------------------------------------------------
+
+    def freeze_to_crate(
+        self, collection: SmartCollection, name: Optional[str] = None
+    ) -> Crate:
+        """Materializa el resultado actual de una collection en un crate fijo.
+
+        Es el puente entre las dos entidades: una smart collection no admite
+        tracks fijados a mano, así que cuando hace falta control manual sobre el
+        resultado, se congela. El crate resultante **no guarda referencia** a la
+        collection de origen: a partir de acá son cosas independientes, y la
+        collection puede cambiar sin que el crate se entere.
+        """
+        resultado = self.evaluator.evaluate(collection)
+        crate = Crate(
+            name=self._free_crate_name(name or f"{collection.name} (congelada)"),
+            track_ids=resultado.track_ids,
+        )
+        guardado = self.repo.save_crate(crate)
+        logger.info(
+            "Collection %r congelada en el crate %r (%d tracks)",
+            collection.name, guardado.name, len(guardado),
+        )
+        return guardado
+
+    def _free_crate_name(self, base: str) -> str:
+        existentes = {crate.name for crate in self.repo.list_crates()}
+        nombre = base
+        indice = 2
+        while nombre in existentes:
+            nombre = f"{base} {indice}"
+            indice += 1
+        return nombre
+
+    # --- crates -----------------------------------------------------------
+
+    def list_crates(self) -> list[Crate]:
+        return self.repo.list_crates()
+
+    def crate_tracks(self, crate: Crate) -> tuple:
+        """Los tracks de un crate, en el orden en que el usuario los puso."""
+        return tuple(self.tracks.get_by_ids(list(crate.track_ids)))

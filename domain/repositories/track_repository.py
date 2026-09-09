@@ -31,6 +31,17 @@ class TrackRepository(ABC):
         pass
 
     @abstractmethod
+    def get_by_ids(self, track_ids: List[str]) -> List[Track]:
+        """
+        Retrieves the given tracks, preserving the order of ``track_ids``.
+
+        This is what a Collections result page needs: the query engine returns
+        an ordered list of ids and the UI has to show them in that order. Ids
+        that no longer exist are skipped, not reported as an error.
+        """
+        pass
+
+    @abstractmethod
     def delete(self, track_id: uuid.UUID) -> bool:
         """
         Deletes a track and its associated assets from persistence.

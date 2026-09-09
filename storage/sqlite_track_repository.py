@@ -118,6 +118,52 @@ class SqliteTrackRepository(TrackRepository):
             logger.error(f"Failed to get all Tracks: {e}")
             return []
 
+    def get_by_ids(self, track_ids: List[str]) -> List[Track]:
+        """Retrieves the given tracks, preserving the order of ``track_ids``.
+
+        One query for the tracks and one for their assets, then reassembled in
+        Python: a page of a Collections result is a few hundred ids, and doing
+        a round trip per track is how a grid ends up feeling slow.
+        """
+        wanted = [str(track_id) for track_id in track_ids]
+        if not wanted:
+            return []
+
+        by_id: dict[str, Track] = {}
+        try:
+            with self.db.get_connection() as conn:
+                # SQLite tops out around 32k host parameters; a result page is
+                # far below that, but chunking keeps it honest for a "select all".
+                for start in range(0, len(wanted), 900):
+                    chunk = wanted[start:start + 900]
+                    placeholders = ",".join("?" * len(chunk))
+                    rows = conn.execute(
+                        "SELECT t.*, a.bpm AS a_bpm, a.musical_key AS a_key, "
+                        "a.energy_level AS a_energy "
+                        "FROM tracks t LEFT JOIN track_analysis a ON a.track_id = t.id "
+                        f"WHERE t.id IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    for row in rows:
+                        track = self._row_to_track(row)
+                        by_id[str(track.id)] = track
+
+                    asset_rows = conn.execute(
+                        f"SELECT * FROM track_assets WHERE track_id IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    for a_row in asset_rows:
+                        owner = by_id.get(str(a_row["track_id"]))
+                        if owner is not None:
+                            owner.assets.append(self._row_to_asset(a_row))
+        except Exception as e:
+            logger.error(f"Failed to get Tracks by ids: {e}")
+            return []
+
+        # Ids that no longer exist simply do not appear; the caller asked for a
+        # page of a query result, not for a guarantee that nothing changed.
+        return [by_id[track_id] for track_id in wanted if track_id in by_id]
+
     def delete(self, track_id: uuid.UUID) -> bool:
         """Deletes a track and its associated assets."""
         try:

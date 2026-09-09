@@ -14,7 +14,7 @@
 **Dónde está el proyecto:** la infraestructura core está congelada y funcionando
 (sprints 1 a 4.4.1 cerrados). El pipeline completo de descarga → conversión →
 etiquetado → librería → análisis → grafo → set → export está construido y probado:
-465 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
+511 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
 automáticos ya asignados**.
 
 **En qué estoy trabajando ahora:** en el arranque del motor de Collections. El modelo
@@ -143,6 +143,13 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
   guardar reemplaza la pila entera en una transacción, el AST viaja como JSON, y una
   `ast_version` futura se rechaza con un error claro en vez de leerse con reglas viejas.
   42 tests
+- **`CollectionService`** (`services/collection_service.py`): la fachada que va a
+  consumir el workspace. Ciclo de vida (crear con nombre libre, renombrar, duplicar,
+  borrar), edición de la pila (agregar / sacar / prender / mover capas, sort y límite),
+  paginado con tracks resueltos, conteo por capa, avisos sobre la pila y **congelar a
+  crate**. 46 tests
+- `SqliteTrackRepository.get_by_ids()`, que resuelve una página de resultados conservando
+  el orden que dio la query (agregado también al contrato `TrackRepository`)
 - **Etiquetado automático enganchado al pipeline** (`services/auto_tagging_service.py`):
   `TrackCreatedEvent` → tags `inherited`, `TrackAnalyzedEvent` → tags `derived`. Un track
   nuevo nace etiquetado sin depender del backfill. Se agregó `TrackAnalyzedEvent` al event
@@ -174,7 +181,7 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - **`requirements.txt` completo**: se agregaron `networkx` (lo importa
   `services/graph_service.py`; estaba solo en `WaveLoad.spec`) y `numpy` (uso directo).
   Verificado que los 9 imports de terceros del árbol tienen su paquete declarado.
-- **465 tests pasan** (`pytest`, ~79 s), todos headless sobre servicios sin Qt
+- **511 tests pasan** (`pytest`, ~90 s), todos headless sobre servicios sin Qt
   (baseline de la sesión: 104)
 - QA E2E en `qa_e2e.py`
 - `WaveLoad.spec` de PyInstaller existente, `console=False`, con manejo de logging para
@@ -242,11 +249,6 @@ v1 es distribuible a otros DJs. Eso abre dos cosas nunca discutidas: si macOS en
 y bajo qué términos se distribuye una aplicación que incorpora `yt-dlp` (licencias de las
 dependencias, y las condiciones de uso de las plataformas de origen).
 
-**3. ¿Existe "congelar a crate"?**
-Convertir el resultado de una smart collection en un crate fijo. No bloquea nada de lo que
-viene ahora, pero define si `Crate` necesita una columna que apunte a la collection de
-origen — y eso sí es una migración.
-
 ### Decididas provisionalmente esta sesión (2026-09-09)
 
 Las cinco están anotadas con su fila en la tabla de la sección 5 de `ARQUITECTURA.md`,
@@ -261,38 +263,39 @@ defendible, y están para revertirse si el uso real las contradice.
 | 5. Conflicto manual/automático | Coexisten; el recálculo borra sólo su propia `source` | La PK `(track_id, tag_id, source)` ya lo permite sin costo |
 | — | Valores normalizados a slug | Sin eso `Techno`/`techno`/`TECHNO` son tres tags |
 | 6. Criterio de rendimiento | 100 ms la primera página, 1 s el conteo por capa, medido sobre 50.000 tracks | Paginar puede cortar temprano y contar no: son dos operaciones con perfiles distintos |
+| ¿Congelar a crate? | Sí, y el crate queda independiente de su origen | Guardar la referencia reintroduce la ambigüedad que separar las dos entidades vino a sacar |
 
 ---
 
 ## 5. Próximos 3 pasos
 
-Con esto, **el motor de Collections está completo del lado de la lógica**: esquema, tags,
-AST, compilador, evaluador, persistencia y enganche al pipeline, con 465 tests. Lo que
-falta para que se vea es UI y las dos salidas que quedaron declaradas en v1.
+**El motor de Collections está completo del lado de la lógica**: esquema, tags, AST,
+compilador, evaluador, persistencia, fachada para la UI y enganche al pipeline, con 511
+tests headless. Lo que falta para que se use es interfaz.
 
 **1. `CollectionsWorkspace`: el builder de capas.**
-Es lo único que separa al motor de ser usable. Un panel con la lista de collections
-(`repo.list_names()`), la pila de capas de la seleccionada con su conteo al costado
-(`evaluator.layer_counts()`), y la grilla de resultados paginada
-(`evaluator.evaluate(limit, offset)`). Dos cosas a tener en cuenta desde el diseño: el
-conteo por capa es la operación más cara del motor y tiene que pedirse **fuera del hilo de
-dibujo**; y una capa `union` en primera posición no hace nada, así que la UI debería
-avisarlo. **No se muestra "Colecciones" en el sidebar hasta que esto funcione de punta a
-punta.**
+Es lo único que separa al motor de ser usable. Todo lo que necesita ya está en
+`CollectionService`: `list_names()` para la lista, `layer_counts()` para el conteo al
+costado de cada capa, `page(offset, page_size)` para la grilla, `warnings()` para los
+avisos y `freeze_to_crate()` para el botón de congelar. Dos cosas a tener en cuenta desde
+el diseño: **`layer_counts()` es la operación más cara del motor** y tiene que pedirse
+fuera del hilo de dibujo; y falta el editor de predicados, que es la parte de UI más
+grande (traducir un AST a controles y de vuelta). **No se muestra "Colecciones" en el
+sidebar hasta que funcione de punta a punta.**
 
 **2. Tagging manual desde la librería.**
-Asignar y quitar tags a un track y a una selección múltiple, sobre
-`MANUAL_NAMESPACES` (`genre`, `mood`, `context`, `status`). El repositorio ya tiene
-`assign` / `unassign`; falta el diálogo y la acción en lote.
+Asignar y quitar tags a un track y a una selección múltiple, sobre `MANUAL_NAMESPACES`
+(`genre`, `mood`, `context`, `status`). `SqliteTagRepository` ya tiene `assign` /
+`unassign` / `tags_for_track`; falta el diálogo y la acción en lote.
 
 **3. Escritura de tags al ID3.**
 `TXXX:WAVELOAD_TAGS` con la lista `namespace:value` separada por `;`, con Mutagen, como
 efecto secundario asíncrono de la asignación. Es lo que hace que la curaduría sobreviva a
-WaveLoad, y es el último ítem de v1 que no depende de una decisión abierta.
+WaveLoad, y es el último ítem de v1 que no depende de ninguna decisión abierta.
 
-Después de eso quedan, en orden de cuánto desbloquean: conectar Collections al grafo / set
-builder / export, y la decisión abierta 1 (la IA como fuente de tags), que sigue siendo el
-único ítem de v1 sin ninguna base construida.
+Después, en orden de cuánto desbloquean: conectar Collections al grafo / set builder /
+export, y la decisión abierta 1 (la IA como fuente de tags), que sigue siendo el único
+ítem de v1 sin ninguna base construida.
 
 ## 6. Log de handoffs
 
@@ -542,3 +545,37 @@ anotado como deuda; por eso el test del cableado lee el archivo en vez de import
 **Siguiente:** el `CollectionsWorkspace`. Es lo único que separa al motor de ser usable.
 
 **`ARQUITECTURA.md` no cambió en esta unidad.**
+
+### 2026-09-09 — unidad 9: `CollectionService`, la fachada para la UI
+**Hecho:** `services/collection_service.py`, que compone el repositorio de collections, el
+evaluador y el repositorio de tracks, y expone lo que un workspace necesita ya resuelto.
+Se agregó `get_by_ids()` a `TrackRepository` y a su implementación SQLite, que es lo que
+convierte una página de ids en tracks conservando el orden de la query (una consulta para
+los tracks y una para sus assets, no una por track). 46 tests nuevos; suite total 511/511
+en verde.
+
+**Por qué existe esta capa:** sin ella el `CollectionsWorkspace` terminaría orquestando
+tres objetos y traduciendo ids a tracks a mano, que es exactamente la lógica que no puede
+vivir en un widget. Con ella el workspace es delgado y todo lo que decide está testeado
+headless.
+
+**Decidido (provisional):**
+- **"Congelar a crate" existe, y el crate queda independiente de su origen.** Cierra la
+  decisión abierta que quedaba en la sección 3 de `ARQUITECTURA.md`. Guardar una
+  referencia obligaría a definir qué pasa cuando la collection cambia, y cualquier
+  respuesta reintroduce la ambigüedad que separar las dos entidades vino a sacar. El
+  rastro queda en el nombre por defecto (`"<collection> (congelada)"`), que es algo que el
+  usuario lee.
+- **Toda edición de la pila guarda y devuelve la collection releída**, no la que se mandó:
+  la UI dibuja lo que quedó en la base.
+- **`warnings()` en vez de validaciones.** Una capa `union` primera, todas las capas
+  apagadas, o un límite sin orden son cosas válidas que el usuario probablemente no quiso.
+  Rechazarlas sería mentir; avisarlas es lo que corresponde.
+- **Crear una collection no pide nombre**: `create_unique()` inventa uno libre. No tiene
+  sentido hacer elegir un nombre antes de dejar ver qué se está armando.
+
+**Bloqueado en:** nada.
+**Siguiente:** el `CollectionsWorkspace`.
+
+**Sección de `ARQUITECTURA.md` que cambió:** 3 (se resuelve el `[PENDIENTE]` de "congelar a
+crate") y 5 (una fila nueva en la tabla de decisiones).

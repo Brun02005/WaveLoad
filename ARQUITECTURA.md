@@ -77,9 +77,19 @@ el otro es estado de cola. El puente es el evento `TrackDownloadedEvent`, que
 Una smart collection no admite tracks fijados a mano ni exclusiones puntuales: si querés
 control manual sobre el resultado, se materializa a un crate.
 
-`[PENDIENTE: definir si existe una acción "congelar a crate" que convierta el resultado de
-una smart collection en un crate, y si ese crate guarda referencia a la collection de
-origen.]`
+**Sí existe "congelar a crate", y el crate no guarda referencia a su origen.**
+`CollectionService.freeze_to_crate()` evalúa la collection y materializa el resultado en un
+crate nuevo. Es el puente entre las dos entidades: como una smart collection no admite
+tracks fijados a mano, congelar es la salida cuando hace falta control manual sobre el
+resultado.
+
+El crate resultante es **independiente** desde el momento en que se crea: no apunta a la
+collection de origen, y ésta puede cambiar o borrarse sin que el crate se entere. Guardar
+la referencia obligaría a decidir qué pasa cuando la collection cambia —¿se re-materializa,
+se avisa, se marca como desactualizado?— y cualquiera de esas respuestas reintroduce por la
+ventana la ambigüedad que separar las dos entidades vino a sacar. El nombre por defecto
+(`"<collection> (congelada)"`) deja el rastro donde importa: en algo que el usuario lee, no
+en una foreign key que el sistema tenga que mantener.
 
 ```mermaid
 erDiagram
@@ -486,6 +496,7 @@ resucita tags que el usuario ya había borrado.
 | **Predicados temporales sólo sobre `created_at` y `analyzed_at`** *(provisional, 2026-09-09)* | (a) Sin predicados temporales; (b) agregar columnas de historial (`last_played_at`, `play_count`) | Esas dos columnas ya existen y ya se pueblan; compararlas como strings ISO-8601 ordena igual que la fecha, sin código extra. `never_played` requeriría inventar una columna sin quién la escriba | Que se construya reproducción o historial de sets: ahí las columnas tendrían un productor real |
 | **Tags al ID3 en `TXXX:WAVELOAD_TAGS`** *(provisional, 2026-09-09)* | (a) `GRP1` (Rekordbox lo lee como Grouping); (b) `COMM` | Es el único destino aditivo: no pisa nada que el usuario o su DJ software hayan escrito. `GRP1` y `COMM` pueden tener contenido previo, y sobrescribirlo en una escritura masiva viola el principio 3 | Que la prioridad pase a ser que los tags se vean dentro de Rekordbox sin importar nada. La salida ya está prevista: mirror opcional a `GRP1`, apagado por defecto |
 | **El ID3 se lee sólo al importar un archivo que no está en la librería** *(provisional, 2026-09-09)* | Sincronización bidireccional permanente entre archivo y DB | En un archivo nuevo no hay conflicto posible, así que reconstruir sus tags es gratis. Releer el ID3 de un archivo ya presente es el camino por el que un archivo desactualizado resucita tags que el usuario borró | Que aparezca un flujo real de edición de tags fuera de WaveLoad que haya que reconciliar |
+| **"Congelar a crate" existe, y el crate queda independiente** *(provisional, 2026-09-09)* | (a) No tener la acción; (b) que el crate guarde una FK a la collection de origen | Es la salida prevista para cuando hace falta control manual sobre el resultado de una query. Guardar la referencia obliga a decidir qué pasa cuando la collection cambia, y cualquier respuesta reintroduce la ambigüedad que separar las dos entidades vino a sacar. El rastro queda en el nombre por defecto, que es algo que el usuario lee | Que los usuarios pidan repetidamente "actualizar este crate desde su collection": ahí la referencia se gana su costo |
 | **`Track` y `DownloadItem` separados** | Una sola entidad con estado de cola y de librería | Uno es permanente y desacoplado de cómo se obtuvo el archivo; el otro es transitorio y carga progreso, reintentos y rutas temporales. Fusionarlos contamina la librería con estado de descarga | Nada previsto. Está documentado en el código como decisión explícita a no revertir |
 | **Servicios puros, sin Qt** | Lógica dentro de los widgets | Permite testear headless: hoy 104 tests corren sin levantar una ventana | Nada previsto |
 | **SQLite local como único repositorio persistente**, con inyección de dependencias | Base embebida alternativa; capa ORM; backend remoto | Un archivo, sin servidor, sin cuenta, sin conexión. La inyección permite sustituir el repositorio en tests | Necesidad real de sincronizar entre máquinas |
