@@ -69,6 +69,40 @@ class SqliteTagRepository:
             ).fetchall()
         return {r[0]: r[1] for r in rows}
 
+    def values_in_namespace(self, namespace: str) -> list[str]:
+        """Los valores que existen en un namespace, ordenados.
+
+        Es lo que llena el desplegable del builder: el usuario elige entre los
+        valores que su librería tiene de verdad, en vez de tipear a ciegas y
+        crear `techno` cuando ya existía `techno` con otro nombre.
+        """
+        with self.db.get_connection() as conn:
+            return [
+                fila[0]
+                for fila in conn.execute(
+                    "SELECT value FROM tags WHERE namespace = ? ORDER BY value",
+                    (str(namespace).strip().lower(),),
+                )
+            ]
+
+    def usage_by_namespace(self, namespace: str) -> list[tuple[str, int]]:
+        """``(valor, cuántos tracks lo tienen)`` de un namespace, de mayor a menor.
+
+        El builder los muestra en este orden: un valor que tienen 400 tracks es
+        más probable que el que tiene 1.
+        """
+        with self.db.get_connection() as conn:
+            return [
+                (fila[0], fila[1])
+                for fila in conn.execute(
+                    "SELECT t.value, COUNT(DISTINCT tt.track_id) FROM tags t"
+                    " LEFT JOIN track_tags tt ON tt.tag_id = t.id"
+                    " WHERE t.namespace = ? GROUP BY t.value"
+                    " ORDER BY COUNT(DISTINCT tt.track_id) DESC, t.value",
+                    (str(namespace).strip().lower(),),
+                )
+            ]
+
     def delete_unused_tags(self) -> int:
         """Borra entradas del vocabulario que no tiene asignada ningún track.
 

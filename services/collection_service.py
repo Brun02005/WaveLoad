@@ -59,10 +59,32 @@ class CollectionPage:
 class CollectionService:
     """Todo lo que la UI de Collections necesita, sin que toque el motor directo."""
 
-    def __init__(self, collection_repository, track_repository, evaluator=None):
+    def __init__(self, collection_repository, track_repository, evaluator=None,
+                 tag_repository=None):
         self.repo = collection_repository
         self.tracks = track_repository
         self.evaluator = evaluator or CollectionEvaluator(collection_repository.db)
+        # Opcional: sólo hace falta para llenar los desplegables del builder.
+        self.tags = tag_repository
+
+    # --- vocabulario para el builder --------------------------------------
+
+    def namespace_values(self, namespace: str) -> list[tuple[str, int]]:
+        """``(valor, cuántos tracks lo tienen)`` de un namespace, de mayor a menor.
+
+        El builder ofrece los valores que la librería tiene de verdad, ordenados
+        por uso: tipear a ciegas es cómo se termina con `techno` y `Techno` como
+        dos tags. Sin repositorio de tags inyectado devuelve vacío.
+        """
+        if self.tags is None:
+            return []
+        return self.tags.usage_by_namespace(namespace)
+
+    def used_namespaces(self) -> list[str]:
+        """Los namespaces que tienen al menos un valor en esta librería."""
+        if self.tags is None:
+            return []
+        return sorted(self.tags.count_by_namespace())
 
     # --- listado y ciclo de vida -----------------------------------------
 

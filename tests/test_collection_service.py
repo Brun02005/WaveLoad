@@ -54,6 +54,7 @@ def service(tmp_path):
     return CollectionService(
         collection_repository=SqliteCollectionRepository(db=db),
         track_repository=SqliteTrackRepository(db=db),
+        tag_repository=tag_repo,
     )
 
 
@@ -318,3 +319,44 @@ class TestGetByIds:
     def test_tracks_come_back_with_their_analysis(self, service):
         track = service.tracks.get_by_ids([str(service.tracks.get_all()[0].id)])[0]
         assert track.bpm is not None
+
+
+class TestVocabularyForTheBuilder:
+    def test_namespace_values_are_ordered_by_usage(self, service):
+        # 12 tracks: bpm 120..131 -> 10 en 120-129 y 2 en 130-139.
+        valores = service.namespace_values("bpm")
+        assert valores == [("120-129", 10), ("130-139", 2)]
+
+    def test_an_empty_namespace_gives_nothing(self, service):
+        assert service.namespace_values("mood") == []
+
+    def test_used_namespaces_are_the_ones_with_values(self, service):
+        assert service.used_namespaces() == ["bpm", "energy", "key"]
+
+    def test_without_a_tag_repository_the_vocabulary_is_empty(self, tmp_path):
+        db = DatabaseManager(db_path=tmp_path / "sin_tags.db")
+        sin_tags = CollectionService(
+            collection_repository=SqliteCollectionRepository(db=db),
+            track_repository=SqliteTrackRepository(db=db),
+        )
+        assert sin_tags.namespace_values("genre") == []
+        assert sin_tags.used_namespaces() == []
+
+
+class TestTagRepositoryVocabulary:
+    def test_values_in_namespace_is_sorted_alphabetically(self, service):
+        assert service.tags.values_in_namespace("bpm") == ["120-129", "130-139"]
+
+    def test_an_unknown_namespace_gives_nothing(self, service):
+        assert service.tags.values_in_namespace("genre") == []
+
+    def test_usage_counts_distinct_tracks(self, service):
+        por_uso = dict(service.tags.usage_by_namespace("key"))
+        assert por_uso == {"8a": 12}
+
+    def test_a_tag_in_the_vocabulary_with_no_tracks_reports_zero(self, service):
+        from domain.tags import Tag
+        with service.tags.db.get_connection() as conn:
+            service.tags.get_or_create_tag_id(Tag("genre", "huerfano"), conn)
+            conn.commit()
+        assert service.tags.usage_by_namespace("genre") == [("huerfano", 0)]

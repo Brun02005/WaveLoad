@@ -14,7 +14,7 @@
 **Dónde está el proyecto:** la infraestructura core está congelada y funcionando
 (sprints 1 a 4.4.1 cerrados). El pipeline completo de descarga → conversión →
 etiquetado → librería → análisis → grafo → set → export está construido y probado:
-511 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
+559 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
 automáticos ya asignados**.
 
 **En qué estoy trabajando ahora:** en el arranque del motor de Collections. El modelo
@@ -143,6 +143,13 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
   guardar reemplaza la pila entera en una transacción, el AST viaja como JSON, y una
   `ast_version` futura se rechaza con un error claro en vez de leerse con reglas viejas.
   42 tests
+- **`LayerForm`** (`services/layer_form.py`): la traducción entre el formulario plano
+  que edita el builder —condiciones unidas por AND u OR, cada una negable— y el AST, en
+  las dos direcciones. Un AST que no entra en el formulario devuelve `None` en vez de
+  recortarse: esa capa se muestra de sólo lectura. 40 tests
+- `SqliteTagRepository.values_in_namespace()` y `usage_by_namespace()`, que son lo que
+  llena los desplegables del builder con los valores que la librería tiene de verdad,
+  ordenados por uso
 - **`CollectionService`** (`services/collection_service.py`): la fachada que va a
   consumir el workspace. Ciclo de vida (crear con nombre libre, renombrar, duplicar,
   borrar), edición de la pila (agregar / sacar / prender / mover capas, sort y límite),
@@ -181,7 +188,7 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - **`requirements.txt` completo**: se agregaron `networkx` (lo importa
   `services/graph_service.py`; estaba solo en `WaveLoad.spec`) y `numpy` (uso directo).
   Verificado que los 9 imports de terceros del árbol tienen su paquete declarado.
-- **511 tests pasan** (`pytest`, ~90 s), todos headless sobre servicios sin Qt
+- **559 tests pasan** (`pytest`, ~89 s), todos headless sobre servicios sin Qt
   (baseline de la sesión: 104)
 - QA E2E en `qa_e2e.py`
 - `WaveLoad.spec` de PyInstaller existente, `console=False`, con manejo de logging para
@@ -269,19 +276,22 @@ defendible, y están para revertirse si el uso real las contradice.
 
 ## 5. Próximos 3 pasos
 
-**El motor de Collections está completo del lado de la lógica**: esquema, tags, AST,
-compilador, evaluador, persistencia, fachada para la UI y enganche al pipeline, con 511
-tests headless. Lo que falta para que se use es interfaz.
+**Toda la lógica del motor de Collections está construida y probada** (559 tests
+headless): esquema, tags, AST, compilador, evaluador de capas, persistencia, fachada para
+la UI, traducción formulario↔AST y enganche al pipeline. **Lo único que falta para que se
+use es la interfaz.**
 
-**1. `CollectionsWorkspace`: el builder de capas.**
-Es lo único que separa al motor de ser usable. Todo lo que necesita ya está en
-`CollectionService`: `list_names()` para la lista, `layer_counts()` para el conteo al
-costado de cada capa, `page(offset, page_size)` para la grilla, `warnings()` para los
-avisos y `freeze_to_crate()` para el botón de congelar. Dos cosas a tener en cuenta desde
-el diseño: **`layer_counts()` es la operación más cara del motor** y tiene que pedirse
-fuera del hilo de dibujo; y falta el editor de predicados, que es la parte de UI más
-grande (traducir un AST a controles y de vuelta). **No se muestra "Colecciones" en el
-sidebar hasta que funcione de punta a punta.**
+**1. `CollectionsWorkspace`.**
+Todo lo que necesita está listo y probado: `list_names()` para la lista de collections,
+`layer_counts()` para el conteo al costado de cada capa, `page(offset, page_size)` para la
+grilla, `warnings()` para los avisos, `namespace_values()` para los desplegables,
+`LayerForm` para el diálogo de editar una capa y `freeze_to_crate()` para el botón de
+congelar. Tres cosas a tener en cuenta desde el diseño:
+- **`layer_counts()` es la operación más cara del motor** (décimas de segundo sobre 50.000
+  tracks) y tiene que pedirse fuera del hilo de dibujo.
+- Una capa cuyo AST no entra en el formulario plano (`LayerForm.is_editable()` da falso)
+  se muestra de sólo lectura con su `describe()`, no se recorta.
+- **"Colecciones" no se agrega al sidebar hasta que esto funcione de punta a punta.**
 
 **2. Tagging manual desde la librería.**
 Asignar y quitar tags a un track y a una selección múltiple, sobre `MANUAL_NAMESPACES`
@@ -293,9 +303,8 @@ Asignar y quitar tags a un track y a una selección múltiple, sobre `MANUAL_NAM
 efecto secundario asíncrono de la asignación. Es lo que hace que la curaduría sobreviva a
 WaveLoad, y es el último ítem de v1 que no depende de ninguna decisión abierta.
 
-Después, en orden de cuánto desbloquean: conectar Collections al grafo / set builder /
-export, y la decisión abierta 1 (la IA como fuente de tags), que sigue siendo el único
-ítem de v1 sin ninguna base construida.
+Después: conectar Collections al grafo / set builder / export, y la decisión abierta 1 (la
+IA como fuente de tags), que sigue siendo el único ítem de v1 sin ninguna base construida.
 
 ## 6. Log de handoffs
 
@@ -579,3 +588,32 @@ headless.
 
 **Sección de `ARQUITECTURA.md` que cambió:** 3 (se resuelve el `[PENDIENTE]` de "congelar a
 crate") y 5 (una fila nueva en la tabla de decisiones).
+
+### 2026-09-09 — unidad 10: la traducción formulario ↔ AST
+**Hecho:** `services/layer_form.py`, más `values_in_namespace()` / `usage_by_namespace()`
+en el repositorio de tags y su exposición en `CollectionService`. 48 tests nuevos; suite
+total 559/559 en verde.
+
+**Por qué esto es una unidad aparte del workspace:** el AST admite anidamiento arbitrario y
+un formulario razonable no. Decidir qué subconjunto edita el builder, y cómo se traduce en
+las dos direcciones, es lógica — y como tal se testea headless, en `services/`, antes de
+escribir un solo widget. Cuando llegue el workspace, el diálogo de editar una capa va a ser
+dibujo y nada más.
+
+**Decidido (provisional):**
+- **El formulario es plano: una lista de condiciones unidas por AND o por OR, cada una
+  negable.** Cubre las tres capas del ejemplo de `ARQUITECTURA.md` y lo que un DJ arma en
+  la práctica, sin meter un editor de árbol en la primera versión.
+- **Un AST que no entra en el formulario devuelve `None`, no se recorta ni levanta.** La
+  capa se muestra de sólo lectura con su `describe()`. Es la respuesta honesta a "esta pila
+  se armó con algo más expresivo que este formulario", y deja la puerta abierta a un DSL de
+  texto sin rehacer el builder.
+- **Una sola condición no se envuelve en un `and` de un solo hijo.** Evalúa igual, pero el
+  nodo suelto es el que se lee bien en la pila y el que vuelve idéntico del round-trip.
+- **Los desplegables ofrecen los valores que la librería tiene, ordenados por uso.** Tipear
+  a ciegas es exactamente cómo se termina con `techno` y `Techno` como dos tags distintos.
+
+**Bloqueado en:** nada.
+**Siguiente:** el `CollectionsWorkspace`.
+
+**`ARQUITECTURA.md` no cambió en esta unidad.**
