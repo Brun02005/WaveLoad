@@ -14,7 +14,7 @@
 **Dónde está el proyecto:** la infraestructura core está congelada y funcionando
 (sprints 1 a 4.4.1 cerrados). El pipeline completo de descarga → conversión →
 etiquetado → librería → análisis → grafo → set → export está construido y probado:
-447 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
+465 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
 automáticos ya asignados**.
 
 **En qué estoy trabajando ahora:** en el arranque del motor de Collections. El modelo
@@ -36,12 +36,13 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 **Motor de Collections**
 - [x] Esquema de tags migrado sobre la DB real sin pérdida de datos (2026-09-09)
 - [ ] Tagging manual: asignar y quitar tags a un track y a una selección múltiple
-- [~] Tags derivados: los 781 tracks analizados ya tienen sus tags de BPM, clave y
-      energía (2343 asignaciones). Falta enganchar el recálculo al análisis de un track
-      nuevo
-- [~] Tags heredados: los 784 tracks ya tienen su tag de plataforma (784 asignaciones;
-      ninguno tiene `source_playlist_name` poblado todavía). Falta engancharlo al import y
-      a la descarga
+- [x] Tags derivados: los 781 tracks analizados tienen sus tags (2343 asignaciones) y
+      cada track nuevo los recibe al analizarse, vía `TrackAnalyzedEvent`
+- [x] Tags heredados: los 784 tracks tienen su tag de plataforma (784 asignaciones) y
+      cada track nuevo lo recibe al crearse, vía `TrackCreatedEvent` (que emiten tanto la
+      descarga como el import). Ningún track tiene `source_playlist_name` poblado todavía,
+      así que el namespace `playlist` sigue sin valores — es el pipeline de descarga el que
+      no llena esa columna, no el tagging
 - [ ] Tags por IA: clasificación de género/mood funcionando end-to-end
 - [~] Builder de capas: la lógica está entera y probada (crear, reordenar,
       activar/desactivar, borrar, y el conteo por capa en una sola consulta); falta la UI
@@ -142,6 +143,11 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
   guardar reemplaza la pila entera en una transacción, el AST viaja como JSON, y una
   `ast_version` futura se rechaza con un error claro en vez de leerse con reglas viejas.
   42 tests
+- **Etiquetado automático enganchado al pipeline** (`services/auto_tagging_service.py`):
+  `TrackCreatedEvent` → tags `inherited`, `TrackAnalyzedEvent` → tags `derived`. Un track
+  nuevo nace etiquetado sin depender del backfill. Se agregó `TrackAnalyzedEvent` al event
+  bus y `AnalysisCoordinator` lo emite **sólo si el análisis se persistió**. Cableado en
+  `application/bootstrap.py`; verificado levantando el contenedor real con Qt. 18 tests
 - **Verificado de punta a punta contra una copia de la librería real:** crear una
   collection de 3 capas, guardarla, releerla por nombre y evaluarla da
   784 → 207 → 89 → 85 tracks en 3,8 ms, y el crate de 8 tracks sobrevive el round-trip
@@ -168,7 +174,7 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - **`requirements.txt` completo**: se agregaron `networkx` (lo importa
   `services/graph_service.py`; estaba solo en `WaveLoad.spec`) y `numpy` (uso directo).
   Verificado que los 9 imports de terceros del árbol tienen su paquete declarado.
-- **447 tests pasan** (`pytest`, ~68 s), todos headless sobre servicios sin Qt
+- **465 tests pasan** (`pytest`, ~79 s), todos headless sobre servicios sin Qt
   (baseline de la sesión: 104)
 - QA E2E en `qa_e2e.py`
 - `WaveLoad.spec` de PyInstaller existente, `console=False`, con manejo de logging para
@@ -188,8 +194,6 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
   devolverlo— así que exige detectar antes que el predicado sea "positivo". Ver 4.5 de
   `ARQUITECTURA.md`
 - Servicio de tagging **manual** (asignar/quitar desde la UI, individual y en lote)
-- Enganchar `sync_derived` al final del análisis de un track y `sync_inherited` al
-  import/descarga, para que un track nuevo nazca etiquetado sin correr el backfill
 - Tagging por IA — no existe nada: `track_embeddings` tiene 0 filas y no hay modelo
   integrado
 - Escritura de tags al ID3
@@ -209,6 +213,10 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - Hay tres archivos `.db` sueltos en la raíz (`waveload_library.db`, su backup y
   `waveload_library.orphan-backup.db`) sin política de retención
 - `waveload_error.log` pesa 4,3 MB sin rotación
+- `application/bootstrap.py` construye el `ApplicationContainer` entero **al importarse**:
+  importar el módulo levanta Qt y corre migraciones contra la librería real. Es el mismo
+  patrón que ya se corrigió en `infrastructure/database.py`. Por eso el test que verifica
+  el cableado lee el archivo en vez de importarlo
 - Las conexiones SQLite se abren con `with db.get_connection() as conn`, que en sqlite3
   hace commit pero **no cierra**: las conexiones quedan vivas hasta que las recolecta el
   GC. En Windows eso impide borrar o mover el archivo de la base mientras el proceso
@@ -258,20 +266,33 @@ defendible, y están para revertirse si el uso real las contradice.
 
 ## 5. Próximos 3 pasos
 
-**1. Compilador de AST a SQL.**
-`services/query_compiler.py`: cada nodo a un fragmento parametrizado (valores bindeados,
-nunca interpolados). Los `tag` a `EXISTS (SELECT 1 FROM track_tags ...)`, los
-`range`/`compare` a condiciones sobre `tracks` / `track_analysis`, los booleanos a
-`AND`/`OR`/`NOT` anidados. Tests contra una DB temporal poblada.
+Con esto, **el motor de Collections está completo del lado de la lógica**: esquema, tags,
+AST, compilador, evaluador, persistencia y enganche al pipeline, con 465 tests. Lo que
+falta para que se vea es UI y las dos salidas que quedaron declaradas en v1.
 
-**2. Evaluador de la pila de capas.**
-El fold `filter` / `exclude` / `union` encadenado como CTEs, con `sort` y `limit` aplicados
-una sola vez al final, y el conteo por capa que necesita el builder. Medir latencia contra
-los 784 tracks reales, que ya tienen 3127 tags con qué filtrar de verdad.
+**1. `CollectionsWorkspace`: el builder de capas.**
+Es lo único que separa al motor de ser usable. Un panel con la lista de collections
+(`repo.list_names()`), la pila de capas de la seleccionada con su conteo al costado
+(`evaluator.layer_counts()`), y la grilla de resultados paginada
+(`evaluator.evaluate(limit, offset)`). Dos cosas a tener en cuenta desde el diseño: el
+conteo por capa es la operación más cara del motor y tiene que pedirse **fuera del hilo de
+dibujo**; y una capa `union` en primera posición no hace nada, así que la UI debería
+avisarlo. **No se muestra "Colecciones" en el sidebar hasta que esto funcione de punta a
+punta.**
 
-**3. Enganchar el tagging automático al pipeline.**
-`sync_derived` al terminar el análisis de un track y `sync_inherited` al importar o
-descargar, para que un track nuevo nazca etiquetado sin depender del backfill manual.
+**2. Tagging manual desde la librería.**
+Asignar y quitar tags a un track y a una selección múltiple, sobre
+`MANUAL_NAMESPACES` (`genre`, `mood`, `context`, `status`). El repositorio ya tiene
+`assign` / `unassign`; falta el diálogo y la acción en lote.
+
+**3. Escritura de tags al ID3.**
+`TXXX:WAVELOAD_TAGS` con la lista `namespace:value` separada por `;`, con Mutagen, como
+efecto secundario asíncrono de la asignación. Es lo que hace que la curaduría sobreviva a
+WaveLoad, y es el último ítem de v1 que no depende de una decisión abierta.
+
+Después de eso quedan, en orden de cuánto desbloquean: conectar Collections al grafo / set
+builder / export, y la decisión abierta 1 (la IA como fuente de tags), que sigue siendo el
+único ítem de v1 sin ninguna base construida.
 
 ## 6. Log de handoffs
 
@@ -487,5 +508,37 @@ haya aparecido.
 **Bloqueado en:** nada.
 **Siguiente:** enganchar el tagging automático al pipeline, para que un track nuevo nazca
 etiquetado sin correr el backfill a mano.
+
+**`ARQUITECTURA.md` no cambió en esta unidad.**
+
+### 2026-09-09 — unidad 8: el tagging automático se engancha al pipeline
+**Hecho:** `services/auto_tagging_service.py`, que escucha el event bus y mantiene al día
+lo que no pone el usuario: `TrackCreatedEvent` → tags `inherited`, `TrackAnalyzedEvent` →
+tags `derived`. Se agregó `TrackAnalyzedEvent` a `core/event_bus.py` y
+`AnalysisCoordinator` lo emite después de persistir. Cableado en
+`application/bootstrap.py`. 18 tests nuevos; suite total 465/465 en verde.
+
+**Verificado levantando el contenedor real** (con `QApplication` y `QT_QPA_PLATFORM=offscreen`):
+los dos handlers quedan suscriptos y el repositorio ve las 3127 asignaciones de la
+librería. La librería real quedó intacta: 784 / 784 / 781, `integrity_check` ok.
+
+**Decidido (provisional):**
+- **El enganche va por el event bus, no por llamada directa.** `AnalysisCoordinator` vive
+  del lado de Qt y no tiene por qué conocer al motor de tags; emite un evento y quien
+  quiera reacciona. Es el mismo patrón que ya usaba la descarga.
+- **`TrackAnalyzedEvent` se emite sólo si el análisis se persistió.** Emitirlo tras un
+  `save` fallido etiquetaría el track con valores que después nadie puede leer.
+- **Un fallo del etiquetado nunca rompe el pipeline.** Se loguea y se sigue: que no se haya
+  podido escribir un tag no puede impedir que un track entre a la librería. El backfill es
+  la red de seguridad, y hay un test que verifica que deja el track exactamente igual que
+  el hook — o sea que correrlo repara sin duplicar.
+
+**Ojo para quien siga:** `application/bootstrap.py` construye el contenedor entero al
+importarse, así que importar ese módulo levanta Qt y corre migraciones contra la librería
+real. Es el mismo patrón que ya se corrigió en `infrastructure/database.py` y quedó
+anotado como deuda; por eso el test del cableado lee el archivo en vez de importarlo.
+
+**Bloqueado en:** nada.
+**Siguiente:** el `CollectionsWorkspace`. Es lo único que separa al motor de ser usable.
 
 **`ARQUITECTURA.md` no cambió en esta unidad.**

@@ -31,6 +31,21 @@ class TrackCreatedEvent(Event):
     """
     track: Any
 
+@dataclass
+class TrackAnalyzedEvent(Event):
+    """
+    Emitted after a track's analysis (BPM / key / energy) has been persisted.
+
+    Exists so that whatever derives from the analysis -- today the `derived`
+    tags of the Collections engine -- can react without the analysis
+    coordinator knowing about it. The coordinator lives on the Qt side; the
+    listeners are pure services.
+    """
+    track_id: str
+    bpm: Any = None
+    key_camelot: Any = None
+    energy: Any = None
+
 # --- Event Bus ---
 
 class EventBus:

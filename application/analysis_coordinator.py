@@ -14,6 +14,7 @@ import uuid
 
 from PySide6.QtCore import QObject, Signal, QThreadPool
 
+from core.event_bus import event_bus, TrackAnalyzedEvent
 from domain.repositories.track_repository import TrackRepository
 from workers.analysis_worker import AnalysisWorker
 
@@ -70,6 +71,18 @@ class AnalysisCoordinator(QObject):
             )
         except Exception as e:
             logger.error(f"Failed to persist analysis for {track_id}: {e}")
+        else:
+            # Only announce an analysis that actually made it to the database.
+            # The derived tags are rebuilt from this event; emitting it after a
+            # failed save would tag a track with values nobody can read back.
+            event_bus.emit(
+                TrackAnalyzedEvent(
+                    track_id=track_id,
+                    bpm=result.bpm,
+                    key_camelot=result.key_camelot,
+                    energy=result.energy,
+                )
+            )
         self._advance()
         self.analysis_ready.emit(track_id, result)
 
