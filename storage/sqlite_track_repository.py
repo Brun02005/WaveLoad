@@ -6,7 +6,7 @@ from pathlib import Path
 
 from domain.track import Track, TrackAsset, AssetType
 from domain.repositories.track_repository import TrackRepository
-from infrastructure.database import db_manager
+from infrastructure.database import DatabaseManager, get_db_manager
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +16,10 @@ class SqliteTrackRepository(TrackRepository):
     Operates on the new waveload_library.db initialized via DatabaseManager.
     """
 
-    def __init__(self):
-        self.db = db_manager
+    def __init__(self, db: "DatabaseManager | None" = None):
+        # Inyectable: los tests pasan un DatabaseManager sobre una DB temporal.
+        # Sin argumento usa la librería real (construida perezosamente).
+        self.db = db or get_db_manager()
 
     def save(self, track: Track) -> None:
         """Saves a track and its associated assets."""

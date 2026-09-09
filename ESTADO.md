@@ -33,7 +33,7 @@ v1 es distribuible a otros DJs, no solo de uso personal. Eso agrega requisitos d
 empaquetado y de primer arranque que no existirían en una herramienta privada.
 
 **Motor de Collections**
-- [ ] Esquema de tags migrado sobre la DB real sin pérdida de datos
+- [x] Esquema de tags migrado sobre la DB real sin pérdida de datos (2026-09-09)
 - [ ] Tagging manual: asignar y quitar tags a un track y a una selección múltiple
 - [ ] Tags derivados: BPM, clave y energía generan tags automáticamente para los 781
       tracks ya analizados, y para cada track nuevo al analizarse
@@ -53,8 +53,8 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - [ ] Desde una collection se puede exportar a M3U8 y XML de Rekordbox
 
 **Calidad y distribución**
-- [ ] Repositorio bajo control de versiones
-- [ ] `requirements.txt` completo y verificado en un entorno limpio
+- [x] Repositorio bajo control de versiones
+- [~] `requirements.txt` completo; falta verificarlo en un venv limpio de verdad
 - [ ] Suite de tests en verde, con cobertura del motor de queries
 - [ ] Primer arranque limpio: librería vacía, sin errores, con un camino obvio a la
       primera descarga o import
@@ -105,6 +105,18 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - Workspaces: Descargas, Librería, Grafo, Ajustes
 - `LibraryWorkspace` desacoplado vía `LibraryService`
 
+**Motor de Collections**
+- **Vocabulario de tags** en `domain/tags.py`: 9 namespaces cerrados, `TagSource`,
+  normalización de valores a slug, `Tag` y `TagAssignment`. Módulo puro, 23 tests
+- **Esquema migrado sobre la librería real** (2026-09-09): `tags`, `track_tags`,
+  `collections`, `collection_layers`, `crates`, `crate_entries` + 8 índices, vía
+  `DatabaseManager._migrate_collections_schema`. Aditiva, idempotente, corrida primero
+  contra un backup: 784 tracks / 784 assets / 781 análisis intactos, `integrity_check` ok,
+  `foreign_key_check` vacío. 21 tests sobre DB temporal
+- `db_manager` pasó a ser **perezoso** (`get_db_manager()` + PEP 562) y
+  `SqliteTrackRepository` acepta un `DatabaseManager` inyectado: importar
+  `infrastructure.database` ya no corre migraciones contra la base real del usuario
+
 **Calidad y repositorio**
 - **Repositorio git inicializado** (2026-09-09). Primer commit `62ff75a` con los 118
   archivos de código; `.gitignore` excluye `*.db`, `*.log`, `mp3_downloads/`,
@@ -112,7 +124,8 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - **`requirements.txt` completo**: se agregaron `networkx` (lo importa
   `services/graph_service.py`; estaba solo en `WaveLoad.spec`) y `numpy` (uso directo).
   Verificado que los 9 imports de terceros del árbol tienen su paquete declarado.
-- 104 tests pasan (`pytest`, ~20 s), todos headless sobre servicios sin Qt
+- **148 tests pasan** (`pytest`, ~22 s), todos headless sobre servicios sin Qt
+  (baseline de la sesión: 104)
 - QA E2E en `qa_e2e.py`
 - `WaveLoad.spec` de PyInstaller existente, `console=False`, con manejo de logging para
   builds sin consola
@@ -123,9 +136,7 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 
 ### Pendiente
 
-**Motor de Collections — nada construido**
-- Esquema y migración de `tags` / `track_tags` / `collections` / `collection_layers` /
-  `crates` / `crate_entries`
+**Motor de Collections**
 - Definición del AST y su serialización
 - Compilador de AST a SQL parametrizado
 - Evaluador de la pila de capas (fold con `filter` / `exclude` / `union`)
@@ -164,50 +175,52 @@ Opciones: (a) integrar un modelo local de clasificación por audio; (b) derivar 
 metadata externa en lugar de audio; (c) sacar la IA de v1 y dejar las otras tres fuentes
 de tags, que sí se apoyan en lo ya construido.
 
-**2. A qué frame ID3 se escriben los tags**
-Bloquea el diseño del sync. Opciones: TXXX con clave propia (limpio, invisible para otro
-software), GRP1 (Rekordbox lo lee como "Grouping", así que los tags aparecen allá sin
-importar nada), COMM.
-
-**3. Set inicial de namespaces y si el usuario puede crear namespaces nuevos**
-Bloquea el diseño de la UI de tagging y del builder de capas.
-
-**4. Lista cerrada de operadores y campos consultables de v1**
-Bloquea la escritura del compilador a SQL. En particular: si una capa puede referenciar a
-otra collection (`in_collection`), y si hay predicados temporales — estos últimos
-requieren columnas que hoy no existen.
-
-**5. Política de conflicto entre tags manuales y automáticos**
-No bloquea el esquema (la columna `source` ya cubre el caso), pero sí la UI y el
-comportamiento del re-análisis.
-
-**6. Criterio de rendimiento**
+**2. Criterio de rendimiento**
 Sin un número de latencia máxima y un tamaño de librería de referencia, no hay forma de
 saber si la decisión de no cachear aguanta. Hoy solo hay 784 tracks para medir, contra un
 objetivo declarado de 50.000+.
 
-**7. Distribución: alcance de plataformas y condiciones legales**
+**3. Distribución: alcance de plataformas y condiciones legales**
 v1 es distribuible a otros DJs. Eso abre dos cosas nunca discutidas: si macOS entra o no,
 y bajo qué términos se distribuye una aplicación que incorpora `yt-dlp` (licencias de las
 dependencias, y las condiciones de uso de las plataformas de origen).
+
+**4. ¿Existe "congelar a crate"?**
+Convertir el resultado de una smart collection en un crate fijo. No bloquea nada de lo que
+viene ahora, pero define si `Crate` necesita una columna que apunte a la collection de
+origen — y eso sí es una migración.
+
+### Decididas provisionalmente esta sesión (2026-09-09)
+
+Las cinco están anotadas con su fila en la tabla de la sección 5 de `ARQUITECTURA.md`,
+incluida la columna "qué la revertiría". Se tomaron sin consulta, eligiendo la opción más
+defendible, y están para revertirse si el uso real las contradice.
+
+| Ex-decisión | Qué se eligió | Por qué en una línea |
+|---|---|---|
+| 2. Frame ID3 | `TXXX:WAVELOAD_TAGS` | Único destino aditivo: no pisa `GRP1`/`COMM`, que pueden tener contenido del usuario |
+| 3. Namespaces | 9 cerrados; el usuario crea valores, no namespaces | Abrirlos después es un botón; cerrarlos después es migrar datos |
+| 4. Operadores | 9 ops, 10 campos, sin `in_collection`, temporales sólo sobre columnas que existen | Nada del compilador depende de datos que hoy no están |
+| 5. Conflicto manual/automático | Coexisten; el recálculo borra sólo su propia `source` | La PK `(track_id, tag_id, source)` ya lo permite sin costo |
+| — | Valores normalizados a slug | Sin eso `Techno`/`techno`/`TECHNO` son tres tags |
 
 ---
 
 ## 5. Próximos 3 pasos
 
-**1. Cerrar las decisiones 2, 3 y 4 y escribir la migración de tags.**
-Frame ID3, namespaces iniciales y lista de operadores. Con eso definido, escribir la
-migración idempotente que crea `tags`, `track_tags`, `collections`, `collection_layers`,
-`crates` y `crate_entries` con sus índices, siguiendo el patrón que ya existe en
-`infrastructure/database.py`. Correrla contra un backup antes que contra la base real.
+**1. `TagService` + tags derivados sobre los 781 tracks analizados.**
+Servicio puro en `services/` que traduzca BPM, clave Camelot y energía a tags `derived`
+(`bpm:120-129`, `key:8a`, `energy:high`), idempotente —re-correrlo no duplica y borra sólo
+filas `derived`— con tests headless sobre una DB temporal, y después una corrida real
+sobre la librería con backup previo.
 
-**2. `TagService` + tags derivados sobre los 781 tracks analizados.**
-Servicio puro en `services/` que traduzca BPM, clave Camelot y energía a tags `derived`,
-idempotente (re-correrlo no duplica), con tests headless sobre una DB temporal.
+**2. AST: definición, validación y serialización.**
+`services/query_ast.py`: los 9 operadores de la sección 4.4 de `ARQUITECTURA.md`, parseo
+desde JSON con errores entendibles, y round-trip. Sin SQL todavía.
 
-**3. AST + compilador a SQL + evaluador de una capa `filter`.**
-Validar de punta a punta el esquema, el AST y el compilador con datos reales antes de
-invertir en UI. Primera medición honesta de rendimiento sobre los 784 tracks.
+**3. Compilador de AST a SQL + evaluador de una capa `filter`.**
+Fragmentos parametrizados (nunca interpolados), encadenados como CTEs. Validar de punta a
+punta contra los 784 tracks reales y tomar la primera medición honesta de latencia.
 
 ## 6. Log de handoffs
 
@@ -230,3 +243,27 @@ repositorio. Los backups siguen viviendo sueltos en la raíz hasta que haya pol�
 retención.
 **Bloqueado en:** nada.
 **Siguiente:** cerrar decisiones 2, 3 y 4 y escribir la migración de tags.
+
+### 2026-09-09 — unidad 2: decisiones 2/3/4/5 + esquema de Collections migrado
+**Hecho:** `domain/tags.py` (vocabulario cerrado de 9 namespaces, `TagSource`,
+normalización a slug, `Tag`, `TagAssignment`) y
+`DatabaseManager._migrate_collections_schema`, que crea las seis tablas del motor con sus
+ocho índices. La migración se corrió **primero contra una copia**
+(`waveload_library.premigration-20260909-132020.db`) y se verificó que los conteos de
+`tracks` / `track_assets` / `track_analysis` no cambian, que `integrity_check` da ok y que
+`foreign_key_check` vuelve vacío, antes de dejarla correr sobre la base real. 44 tests
+nuevos; suite total 148/148 en verde.
+**Decidido:** las decisiones 2, 3, 4 y 5 de la lista de abiertas, más la normalización a
+slug (ver la tabla de la sección 4 y las filas nuevas en la sección 5 de
+`ARQUITECTURA.md`). Todas provisionales.
+**Efecto colateral resuelto:** `infrastructure.database` construía el `DatabaseManager`
+global al importarse, así que cualquier import corría migraciones contra la librería real
+del usuario. Ahora es perezoso (`get_db_manager()`) y `SqliteTrackRepository` acepta uno
+inyectado, que es lo que permite testear el esquema sobre una DB temporal.
+**Bloqueado en:** nada.
+**Siguiente:** `TagService` y los tags derivados de los 781 tracks analizados.
+
+**Secciones de `ARQUITECTURA.md` que cambiaron en esta unidad:** 4.1 (namespaces), 4.2
+(política de conflicto), 4.4 (lista cerrada de operadores y campos), 4.6 (nombres de tabla
+congelados), 4.7 (frame ID3 y lectura), y 5 (siete filas nuevas en la tabla de
+decisiones).

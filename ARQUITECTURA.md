@@ -183,8 +183,30 @@ de su namespace. Ejemplos: `genre:techno`, `mood:dark`, `context:peak-time`,
 Que el namespace sea obligatorio es lo que hace legibles y componibles las capas de
 query: una capa opera sobre un eje, no sobre una nube de etiquetas sueltas.
 
-`[PENDIENTE: definir el set inicial de namespaces de v1, y si el usuario puede crear
-namespaces nuevos desde la UI o solo valores dentro de los existentes.]`
+**Namespaces de v1 (lista cerrada).** Definidos en `domain/tags.py`, que es la única
+autoridad sobre el vocabulario:
+
+| Namespace | Producido por | Para qué |
+|---|---|---|
+| `genre` | manual + ai | Género musical |
+| `mood` | manual + ai | Carácter del track (`dark`, `euphoric`, `hypnotic`) |
+| `context` | manual | Dónde entra en un set (`warmup`, `peak-time`, `closing`) |
+| `status` | manual | Estado de curaduría (`to-review`, `ready`, `already-played`) |
+| `bpm` | derived | Bucket de tempo (`120-129`) |
+| `key` | derived | Código Camelot (`8a`) |
+| `energy` | derived | Banda de energía (`low`/`mid`/`high`/`peak`) |
+| `source` | inherited | Plataforma de origen (`youtube`, `local`) |
+| `playlist` | inherited | Playlist de origen |
+
+El usuario crea **valores** libremente dentro de cada namespace; **no crea namespaces**
+desde la UI en v1. Los namespaces `derived` e `inherited` no son editables a mano: se
+recalculan. Agregar un namespace es agregar una línea a la tupla `NAMESPACES` — no
+requiere migración, porque la columna es TEXT.
+
+Los valores se normalizan a slug minúsculo con guiones (`"Peak Time"` -> `peak-time`,
+`"Drum & Bass"` -> `drum-bass`), de modo que la identidad de un tag es su slug y la UI
+puede mostrar una versión bonita encima. Esto evita que `Techno`, `techno` y `TECHNO` sean
+tres tags distintos, que es exactamente cómo se degradan los sistemas de tags libres.
 
 ### 4.2 Procedencia de los tags
 
@@ -200,9 +222,15 @@ Cada asignación guarda de dónde salió. Las cuatro fuentes de v1:
 Los tags `derived` se recalculan cuando se re-analiza un track; los `manual` nunca se
 tocan automáticamente.
 
-`[PENDIENTE: política de conflicto. Qué pasa cuando una fuente automática asigna
-genre:techno y el usuario había puesto manualmente genre:minimal — ¿coexisten, gana el
-manual, o el manual bloquea futuras asignaciones automáticas en ese namespace?]`
+**Política de conflicto: coexisten, y lo automático nunca pisa lo manual.** La clave
+primaria de `track_tags` es `(track_id, tag_id, source)`, así que un mismo tag puede estar
+asignado por dos fuentes a la vez y ninguna sobrescribe a la otra. Un recálculo de tags
+`derived` borra *sólo* las filas con `source = derived` de ese track y las vuelve a
+escribir; jamás toca `manual`. Si el usuario puso `genre:minimal` y la IA propone
+`genre:techno`, el track queda con los dos, cada uno con su procedencia visible, y es el
+usuario quien decide si borra alguno. La alternativa —que el manual bloquee futuras
+asignaciones automáticas en ese namespace— se descartó porque convierte un acto de
+etiquetado en una configuración invisible y persistente.
 
 `[PENDIENTE: umbral de confianza mínimo para materializar un tag de IA, y si los tags de
 IA se muestran visualmente distintos de los manuales.]`
@@ -253,11 +281,35 @@ Tipos de nodo:
 - `text` — búsqueda sobre `title` / `artist` / `album`
 - `source` — sobre procedencia del track (`source_platform`, `source_playlist_name`)
 
-`[PENDIENTE: cerrar la lista exacta de operadores y campos consultables de v1. Falta
-decidir en particular (a) si existe un nodo que referencie a otra collection
-(`{"op": "in_collection", "id": N}`), lo que permitiría componer colecciones entre sí, y
-(b) si hay predicados temporales (added_before, analyzed_after, never_played) — esto
-último requiere columnas que hoy no existen.]`
+**Lista cerrada de v1.** Operadores: `and`, `or`, `not`, `tag`, `tag_any`, `range`,
+`compare`, `text`, `source`. Comparadores de `compare`: `eq`, `ne`, `lt`, `lte`, `gt`,
+`gte`, `is_null`, `not_null`. Modos de `text`: `contains` (default), `equals`,
+`starts_with`.
+
+Campos consultables, todos sobre columnas que ya existen:
+
+| Campo | Origen | Tipo |
+|---|---|---|
+| `bpm` | `track_analysis.bpm` | numérico |
+| `energy` | `track_analysis.energy_level` | numérico |
+| `duration` | `tracks.duration` | numérico |
+| `title`, `artist`, `album` | `tracks` | texto |
+| `source_platform`, `source_playlist_name` | `tracks` | texto (nodo `source`) |
+| `created_at` | `tracks.created_at` | fecha ISO-8601 |
+| `analyzed_at` | `track_analysis.analyzed_at` | fecha ISO-8601 |
+
+**Predicados temporales: sí, pero sólo sobre columnas existentes.** `created_at` y
+`analyzed_at` se consultan con `range`/`compare` comparando strings ISO-8601, que en ese
+formato ordena igual que la fecha. `never_played` queda fuera de v1: no hay historial de
+reproducción y agregarlo sería inventar una columna sin quién la escriba.
+
+**`in_collection`: fuera de v1.** Referenciar una collection desde otra invita ciclos,
+obliga a detección de ciclos y a compilación recursiva, y la pila de capas ya cubre el
+caso común. Agregarlo después es aditivo —un tipo de nodo nuevo y un bump de
+`ast_version`— y no requiere migración.
+
+`is_null` / `not_null` sobre `bpm` cubren "tracks todavía sin analizar" sin necesidad de
+un operador dedicado.
 
 El AST se versiona con un campo `ast_version` para poder migrar la forma del JSON sin
 romper colecciones guardadas.
@@ -298,8 +350,28 @@ crates(id, name, created_at, updated_at)
 crate_entries(crate_id, track_id, position)                     PK(crate_id, track_id)
 ```
 
-`[PENDIENTE: confirmar nombres definitivos de tabla y columna antes de escribir la
-migración. Una vez corrida sobre la librería real, cambiarlos cuesta.]`
+**Estos nombres están congelados.** La migración
+(`DatabaseManager._migrate_collections_schema`) ya corrió contra la librería real el
+2026-09-09; renombrar una tabla o una columna a partir de acá cuesta una migración de
+datos. La forma exacta, con los `created_at` que el resumen de arriba omitía:
+
+```
+tags(id, namespace, value, created_at)                          UNIQUE(namespace, value)
+track_tags(track_id, tag_id, source, confidence, created_at)    PK(track_id, tag_id, source)
+collections(id, name, sort_json, limit_n, ast_version, created_at, updated_at)  name UNIQUE
+collection_layers(id, collection_id, position, enabled, mode, ast_json)
+crates(id, name, created_at, updated_at)                                        name UNIQUE
+crate_entries(crate_id, track_id, position)                     PK(crate_id, track_id)
+```
+
+Índices: `idx_track_tags_tag(tag_id, track_id)`, `idx_track_tags_track(track_id)`,
+`idx_track_tags_source(source)`, `idx_tags_namespace(namespace)`,
+`idx_collection_layers_position(collection_id, position)` UNIQUE,
+`idx_crate_entries_crate(crate_id, position)`, más `idx_track_analysis_bpm` e
+`idx_track_analysis_energy`, que son contra los que pegan los nodos `range` / `compare`.
+
+La migración es puramente aditiva: cada sentencia es `IF NOT EXISTS` y ninguna lee,
+reescribe ni borra una fila de la librería existente.
 
 ### 4.7 Salida al archivo (ID3)
 
@@ -308,13 +380,24 @@ WaveLoad. La escritura es un efecto secundario asíncrono de la asignación, nun
 la UI, y la DB sigue siendo la fuente de verdad: si el archivo y la DB difieren, gana la
 DB.
 
-`[PENDIENTE: decidir a qué frame ID3 se escriben. Opciones sobre la mesa: un TXXX con
-clave propia (limpio, invisible para otro software), GRP1 (Rekordbox lo lee como
-"Grouping") o COMM. La elección determina si los tags aparecen dentro de Rekordbox sin
-importar nada.]`
+**Frame elegido: `TXXX:WAVELOAD_TAGS`**, un frame de usuario con clave propia que
+contiene la lista completa de tags `namespace:value` separados por `;`. Es el único de los
+tres candidatos que es *aditivo*: no pisa nada que el usuario o su DJ software hayan
+escrito. `GRP1` se descartó como destino primario porque Rekordbox lo lee como "Grouping"
+—que es justamente por qué tentaba— pero también porque **ya puede tener contenido del
+usuario**, y sobrescribirlo en una escritura masiva viola el principio 3. `COMM` tiene el
+mismo problema y además es multilingüe y ambiguo.
 
-`[PENDIENTE: definir si la lectura es bidireccional — si al importar un archivo que ya
-tiene tags de WaveLoad en el ID3, esos tags se reconstruyen en la DB.]`
+Escribir a `GRP1` queda como **mirror opcional**: un ajuste apagado por defecto, para
+quien prefiera que sus tags aparezcan dentro de Rekordbox sin importar nada y acepte que
+se le pise el campo Grouping. Esa parte no es v1.
+
+**Lectura: sí, pero sólo al importar un archivo que todavía no está en la librería.** En
+ese caso no hay conflicto posible —no existe fila en la DB que pueda ganar— y se
+reconstruyen los tags con `source = manual`, que es lo que eran cuando se escribieron.
+Para un archivo que ya está en la librería no se relee nunca el ID3: la DB es la fuente de
+verdad, y una re-lectura sería exactamente el camino por el que un archivo desactualizado
+resucita tags que el usuario ya había borrado.
 
 ---
 
@@ -330,6 +413,13 @@ tiene tags de WaveLoad en el ID3, esos tags se reconstruyen en la DB.]`
 | **Tags namespaced `key:value`, namespaces controlados** | (a) Tags planos libres; (b) namespaces y valores ambos fijados por esquema | Los planos se desordenan solos apenas la librería crece. Controlar también los valores obliga a editar un esquema antes de poder etiquetar, lo que rompe el flujo rápido | Que la cantidad de namespaces crezca tanto que dejen de ser vocabulario y pasen a ser ruido |
 | **Los tags se escriben también al ID3** | (a) Solo en la DB de WaveLoad; (b) materializarlos únicamente al exportar | El trabajo de curaduría es lo más caro de reproducir y tiene que sobrevivir a la herramienta. Mutagen ya está en el stack | Corrupción o pérdida de metadata en escritura masiva; o que la escritura resulte demasiado lenta sobre librerías grandes |
 | **Grafo y set builder como consumidores de Collections** | (a) Congelarlos fuera de v1; (b) mantenerlos como workspaces independientes | Dejan de competir con Collections como modelo de organización y pasan a ser una salida: se arma una collection y desde ahí se genera el grafo o el set. Conserva el código ya construido y probado | Que la integración cueste más que el valor que aporta: en ese caso se congelan |
+| **Namespaces cerrados: 9 en v1, el usuario crea valores pero no namespaces** *(provisional, 2026-09-09)* | (a) Namespaces libres desde el arranque; (b) namespaces y valores ambos fijos | Nueve ejes cubren lo que hoy hay con qué llenar: tres los produce el análisis, dos el origen, cuatro el usuario. Dejar crear namespaces desde la UI antes de saber cuáles se usan de verdad garantiza un vocabulario roto a los tres meses. Abrirlos después es agregar un botón; cerrarlos después es migrar datos | Que al usar la app aparezca repetidamente un eje que no entra en ninguno de los nueve. La salida es agregar una línea a `NAMESPACES`, no abrir la creación al usuario |
+| **Valores de tag normalizados a slug** *(provisional, 2026-09-09)* | Guardar el texto tal como lo tipeó el usuario | La identidad de un tag tiene que ser insensible a mayúsculas, espacios y puntuación, o `Techno` / `techno` / `TECHNO` se vuelven tres tags. La UI puede mostrar una etiqueta bonita encima del slug | Que los usuarios quieran valores con tipografía significativa que el slug destruya |
+| **Lo automático nunca pisa lo manual; los tags de distinta fuente coexisten** *(provisional, 2026-09-09)* | (a) Gana el manual y borra lo automático; (b) el manual bloquea el namespace para fuentes automáticas | La PK `(track_id, tag_id, source)` ya lo permite sin costo. Un recálculo de `derived` borra sólo filas `derived`. Bloquear un namespace convierte un acto de etiquetado en configuración invisible | Que en la práctica la coexistencia genere ruido visual insoportable en tracks muy etiquetados |
+| **AST de v1 con lista cerrada de 9 operadores y 10 campos; sin `in_collection`** *(provisional, 2026-09-09)* | (a) Incluir `in_collection` desde v1; (b) dejar la lista abierta y agregar operadores sobre la marcha | Todos los campos elegidos existen hoy como columna: nada del compilador depende de datos que no están. `in_collection` obliga a detección de ciclos y compilación recursiva por un caso que la pila de capas ya cubre, y agregarlo después es aditivo (nodo nuevo + bump de `ast_version`) | Que aparezca la necesidad real de componer colecciones entre sí, o un predicado frecuente que no se pueda expresar con los nueve operadores |
+| **Predicados temporales sólo sobre `created_at` y `analyzed_at`** *(provisional, 2026-09-09)* | (a) Sin predicados temporales; (b) agregar columnas de historial (`last_played_at`, `play_count`) | Esas dos columnas ya existen y ya se pueblan; compararlas como strings ISO-8601 ordena igual que la fecha, sin código extra. `never_played` requeriría inventar una columna sin quién la escriba | Que se construya reproducción o historial de sets: ahí las columnas tendrían un productor real |
+| **Tags al ID3 en `TXXX:WAVELOAD_TAGS`** *(provisional, 2026-09-09)* | (a) `GRP1` (Rekordbox lo lee como Grouping); (b) `COMM` | Es el único destino aditivo: no pisa nada que el usuario o su DJ software hayan escrito. `GRP1` y `COMM` pueden tener contenido previo, y sobrescribirlo en una escritura masiva viola el principio 3 | Que la prioridad pase a ser que los tags se vean dentro de Rekordbox sin importar nada. La salida ya está prevista: mirror opcional a `GRP1`, apagado por defecto |
+| **El ID3 se lee sólo al importar un archivo que no está en la librería** *(provisional, 2026-09-09)* | Sincronización bidireccional permanente entre archivo y DB | En un archivo nuevo no hay conflicto posible, así que reconstruir sus tags es gratis. Releer el ID3 de un archivo ya presente es el camino por el que un archivo desactualizado resucita tags que el usuario borró | Que aparezca un flujo real de edición de tags fuera de WaveLoad que haya que reconciliar |
 | **`Track` y `DownloadItem` separados** | Una sola entidad con estado de cola y de librería | Uno es permanente y desacoplado de cómo se obtuvo el archivo; el otro es transitorio y carga progreso, reintentos y rutas temporales. Fusionarlos contamina la librería con estado de descarga | Nada previsto. Está documentado en el código como decisión explícita a no revertir |
 | **Servicios puros, sin Qt** | Lógica dentro de los widgets | Permite testear headless: hoy 104 tests corren sin levantar una ventana | Nada previsto |
 | **SQLite local como único repositorio persistente**, con inyección de dependencias | Base embebida alternativa; capa ORM; backend remoto | Un archivo, sin servidor, sin cuenta, sin conexión. La inyección permite sustituir el repositorio en tests | Necesidad real de sincronizar entre máquinas |

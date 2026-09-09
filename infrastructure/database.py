@@ -106,6 +106,7 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 self._migrate_source_metadata_columns(conn)
                 self._migrate_deduplicate_and_unique_constraint(conn)
+                self._migrate_collections_schema(conn)
                 conn.commit()
                 logger.info("Database migrations completed successfully.")
         except Exception as e:
@@ -176,5 +177,135 @@ class DatabaseManager:
         logger.info("Migration: Added UNIQUE index on track_assets.file_path.")
 
 
-# Global instance for use across the application
-db_manager = DatabaseManager()
+    def _migrate_collections_schema(self, conn: sqlite3.Connection):
+        """Migration: create the Collections engine schema (tags + queries).
+
+        Adds the six tables of the tag/query engine plus their indexes. It is
+        idempotent by construction (every statement is ``IF NOT EXISTS``) and
+        purely additive: it never reads, rewrites or deletes a single row of
+        the existing library. Running it on a database that already has the
+        tables is a no-op.
+
+        Naming is frozen here on purpose: once this runs against the real
+        library, renaming a table or column costs a data migration.
+        """
+        collections_sql = """
+        -- Vocabulario de tags. Un tag es siempre namespace:value.
+        CREATE TABLE IF NOT EXISTS tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            namespace TEXT NOT NULL,
+            value TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (namespace, value)
+        );
+
+        -- Asignación de un tag a un track, con su procedencia.
+        -- PK compuesta con source: el mismo tag puede venir de dos fuentes a la
+        -- vez (manual + ai) y coexisten sin pisarse.
+        CREATE TABLE IF NOT EXISTS track_tags (
+            track_id TEXT NOT NULL,
+            tag_id INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (track_id, tag_id, source),
+            FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE,
+            FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE
+        );
+
+        -- Smart collection: pila ordenada de capas. Se re-evalúa siempre.
+        CREATE TABLE IF NOT EXISTS collections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            sort_json TEXT,
+            limit_n INTEGER,
+            ast_version INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        -- Una capa de la pila. El predicado va como AST en JSON, nunca texto.
+        CREATE TABLE IF NOT EXISTS collection_layers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            collection_id INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            mode TEXT NOT NULL,
+            ast_json TEXT NOT NULL,
+            FOREIGN KEY (collection_id) REFERENCES collections (id) ON DELETE CASCADE
+        );
+
+        -- Crate: colección manual, lista ordenada y fija de tracks.
+        CREATE TABLE IF NOT EXISTS crates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS crate_entries (
+            crate_id INTEGER NOT NULL,
+            track_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (crate_id, track_id),
+            FOREIGN KEY (crate_id) REFERENCES crates (id) ON DELETE CASCADE,
+            FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE
+        );
+
+        -- Índices del motor de queries. track_tags se recorre en los dos
+        -- sentidos: por tag (¿quiénes tienen este tag?) y por track (¿qué tags
+        -- tiene este track?).
+        CREATE INDEX IF NOT EXISTS idx_track_tags_tag ON track_tags (tag_id, track_id);
+        CREATE INDEX IF NOT EXISTS idx_track_tags_track ON track_tags (track_id);
+        CREATE INDEX IF NOT EXISTS idx_track_tags_source ON track_tags (source);
+        CREATE INDEX IF NOT EXISTS idx_tags_namespace ON tags (namespace);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_layers_position
+            ON collection_layers (collection_id, position);
+        CREATE INDEX IF NOT EXISTS idx_crate_entries_crate
+            ON crate_entries (crate_id, position);
+
+        -- Los nodos range/compare del AST pegan contra estas columnas.
+        CREATE INDEX IF NOT EXISTS idx_track_analysis_bpm ON track_analysis (bpm);
+        CREATE INDEX IF NOT EXISTS idx_track_analysis_energy ON track_analysis (energy_level);
+        """
+
+        existing = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        conn.executescript(collections_sql)
+
+        created = {
+            "tags", "track_tags", "collections",
+            "collection_layers", "crates", "crate_entries",
+        } - existing
+        if created:
+            logger.info(
+                "Migration: Collections schema created (%s).",
+                ", ".join(sorted(created)),
+            )
+
+
+# --- Instancia global, perezosa ------------------------------------------------
+# Construir un DatabaseManager corre las migraciones. Antes esto pasaba al
+# *importar* el módulo, así que cualquier import (un test, una herramienta de
+# línea de comandos) tocaba la base real del usuario como efecto colateral.
+# Ahora se construye en el primer uso; el nombre ``db_manager`` sigue existiendo
+# vía PEP 562 para no romper a quien lo importa directo.
+_db_manager: "DatabaseManager | None" = None
+
+
+def get_db_manager() -> DatabaseManager:
+    """Devuelve el DatabaseManager de la librería real, construyéndolo una vez."""
+    global _db_manager
+    if _db_manager is None:
+        _db_manager = DatabaseManager()
+    return _db_manager
+
+
+def __getattr__(name: str):
+    if name == "db_manager":
+        return get_db_manager()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
