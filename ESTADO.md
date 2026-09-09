@@ -14,7 +14,7 @@
 **Dónde está el proyecto:** la infraestructura core está congelada y funcionando
 (sprints 1 a 4.4.1 cerrados). El pipeline completo de descarga → conversión →
 etiquetado → librería → análisis → grafo → set → export está construido y probado:
-284 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
+329 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
 automáticos ya asignados**.
 
 **En qué estoy trabajando ahora:** en el arranque del motor de Collections. El modelo
@@ -58,13 +58,15 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 **Calidad y distribución**
 - [x] Repositorio bajo control de versiones
 - [~] `requirements.txt` completo; falta verificarlo en un venv limpio de verdad
-- [ ] Suite de tests en verde, con cobertura del motor de queries
+- [~] Suite de tests en verde (329), con cobertura del AST y del compilador; falta la
+      del evaluador de capas y la de la UI
 - [ ] Primer arranque limpio: librería vacía, sin errores, con un camino obvio a la
       primera descarga o import
 - [ ] Los errores se muestran como mensajes entendibles, no como trazas
 - [ ] Instalador `.exe` que corre en una máquina sin Python ni FFmpeg preinstalados
-- [ ] `[PENDIENTE: definir el criterio de rendimiento — qué latencia máxima de evaluación
-      es aceptable y sobre qué tamaño de librería se mide]`
+- [x] Criterio de rendimiento definido y medido: 100 ms la primera página de resultados
+      y 1 s el conteo exacto por capa, sobre una librería de 50.000 tracks. Los dos se
+      cumplen hoy con margen (ver la sección 4.5 de `ARQUITECTURA.md`)
 
 **No entra en v1:** ver la sección 7 de `ARQUITECTURA.md`.
 
@@ -124,6 +126,15 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
   sección 4.4 de `ARQUITECTURA.md`, con validación estricta (operador, campo, forma y
   llaves inesperadas), `to_dict`/`parse` round-trip, `walk()` y `describe()` legible.
   `AST_VERSION = 1`. 61 tests
+- **Compilador de AST a SQL** en `services/query_compiler.py`: cada nodo a un fragmento
+  parametrizado (ningún valor del usuario llega a ser parte de la sentencia; hay un test
+  que lo verifica con un `DROP TABLE` de prueba), `build_track_ids_query` y
+  `build_count_query`. 45 tests, la mayoría ejecutando SQL de verdad contra una librería
+  de prueba con casos borde (track sin analizar, `%` tipeado por el usuario, etc.)
+- **Medición de rendimiento real** con `tools/bench_queries.py` y
+  `tools/make_synthetic_library.py` (librería sintética de 50.000 tracks / 307.744 tags,
+  con la distribución de BPM de la real). Ver la tabla de la sección 4.5 de
+  `ARQUITECTURA.md`
 - **`SqliteTagRepository`** (`storage/tag_repository.py`): vocabulario, asignaciones y
   `set_tags_for_source`, que es la operación que hace idempotente el recálculo — borra
   sólo filas de su propia fuente, así que lo manual nunca se toca
@@ -143,7 +154,7 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - **`requirements.txt` completo**: se agregaron `networkx` (lo importa
   `services/graph_service.py`; estaba solo en `WaveLoad.spec`) y `numpy` (uso directo).
   Verificado que los 9 imports de terceros del árbol tienen su paquete declarado.
-- **284 tests pasan** (`pytest`, ~32 s), todos headless sobre servicios sin Qt
+- **329 tests pasan** (`pytest`, ~43 s), todos headless sobre servicios sin Qt
   (baseline de la sesión: 104)
 - QA E2E en `qa_e2e.py`
 - `WaveLoad.spec` de PyInstaller existente, `console=False`, con manejo de logging para
@@ -156,8 +167,8 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 ### Pendiente
 
 **Motor de Collections**
-- Compilador de AST a SQL parametrizado
 - Evaluador de la pila de capas (fold con `filter` / `exclude` / `union`)
+- Persistencia de collections y crates (el esquema está, falta el repositorio)
 - Servicio de tagging **manual** (asignar/quitar desde la UI, individual y en lote)
 - Enganchar `sync_derived` al final del análisis de un track y `sync_inherited` al
   import/descarga, para que un track nuevo nazca etiquetado sin correr el backfill
@@ -200,17 +211,12 @@ Opciones: (a) integrar un modelo local de clasificación por audio; (b) derivar 
 metadata externa en lugar de audio; (c) sacar la IA de v1 y dejar las otras tres fuentes
 de tags, que sí se apoyan en lo ya construido.
 
-**2. Criterio de rendimiento**
-Sin un número de latencia máxima y un tamaño de librería de referencia, no hay forma de
-saber si la decisión de no cachear aguanta. Hoy solo hay 784 tracks para medir, contra un
-objetivo declarado de 50.000+.
-
-**3. Distribución: alcance de plataformas y condiciones legales**
+**2. Distribución: alcance de plataformas y condiciones legales**
 v1 es distribuible a otros DJs. Eso abre dos cosas nunca discutidas: si macOS entra o no,
 y bajo qué términos se distribuye una aplicación que incorpora `yt-dlp` (licencias de las
 dependencias, y las condiciones de uso de las plataformas de origen).
 
-**4. ¿Existe "congelar a crate"?**
+**3. ¿Existe "congelar a crate"?**
 Convertir el resultado de una smart collection en un crate fijo. No bloquea nada de lo que
 viene ahora, pero define si `Crate` necesita una columna que apunte a la collection de
 origen — y eso sí es una migración.
@@ -228,6 +234,7 @@ defendible, y están para revertirse si el uso real las contradice.
 | 4. Operadores | 9 ops, 10 campos, sin `in_collection`, temporales sólo sobre columnas que existen | Nada del compilador depende de datos que hoy no están |
 | 5. Conflicto manual/automático | Coexisten; el recálculo borra sólo su propia `source` | La PK `(track_id, tag_id, source)` ya lo permite sin costo |
 | — | Valores normalizados a slug | Sin eso `Techno`/`techno`/`TECHNO` son tres tags |
+| 6. Criterio de rendimiento | 100 ms la primera página, 1 s el conteo por capa, medido sobre 50.000 tracks | Paginar puede cortar temprano y contar no: son dos operaciones con perfiles distintos |
 
 ---
 
@@ -355,3 +362,43 @@ verificado para cada tipo de nodo, `walk()` en preorden y `describe()` legible.
 
 **`ARQUITECTURA.md` no cambió en esta unidad**: el AST implementa exactamente la sección
 4.4 tal como quedó escrita en la unidad 2.
+
+### 2026-09-09 — unidad 5: compilador de AST a SQL, y la primera medición honesta
+**Hecho:** `services/query_compiler.py` traduce cada nodo del AST a un fragmento de SQL
+parametrizado sobre `tracks LEFT JOIN track_analysis`. El LEFT JOIN es lo que mantiene en
+la librería a los tracks sin analizar (3 de los 784 reales); con un JOIN interno
+desaparecerían de toda query. 45 tests nuevos, la mayoría ejecutando SQL contra una
+librería de prueba. Suite total 329/329 en verde.
+
+**Medición:** se generó una librería sintética de 50.000 tracks y 307.744 asignaciones de
+tag (`tools/make_synthetic_library.py`, con la distribución de BPM de la librería real, no
+uniforme) y se midió con `tools/bench_queries.py`. La primera versión del compilador daba
+**1929 ms** en el peor predicado. Dos cambios lo bajaron a **518 ms**:
+
+1. Sacar el `COALESCE` del predicado de nivel superior. Era redundante —un `WHERE` ya
+   descarta las filas que dan NULL— y le impedía a SQLite usar el índice.
+2. Compilar los nodos `tag` a `id IN (subconsulta)` en lugar de `EXISTS` correlacionado.
+   El `EXISTS` se re-evalúa una vez por track; la subconsulta se materializa una sola vez.
+
+Los dos están documentados con sus números en el código y en la sección 4.5 de
+`ARQUITECTURA.md`.
+
+**El hallazgo que importa:** el costo no está en materializar filas sino en recorrer.
+`COUNT(*)` y traer todos los ids cuestan casi lo mismo (250 vs 275 ms), pero la primera
+página (`LIMIT 200`) del mismo predicado cuesta **0,6 ms**, y la del predicado hostil
+**22 ms**. O sea: una UI que pagina no tiene problema de latencia ni a 50.000 tracks. El
+que sí lo tiene es el **conteo exacto por capa** del builder, porque un `COUNT` no puede
+cortar temprano. Eso hay que resolverlo en el diseño del builder —conteo asincrónico o
+aproximado—, no en el motor.
+
+**Decidido (provisional):** el criterio de rendimiento (decisión abierta 6, ahora cerrada)
+son dos presupuestos, no uno: **100 ms para la primera página** y **1 s para el conteo por
+capa**, ambos medidos sobre una librería de 50.000 tracks. Los dos se cumplen hoy con
+margen. La decisión de no cachear queda confirmada con evidencia, no con un argumento.
+
+**Bloqueado en:** nada.
+**Siguiente:** el evaluador de la pila de capas.
+
+**Secciones de `ARQUITECTURA.md` que cambiaron:** 4.5 (dos detalles de compilación con sus
+números, y la tabla de latencias medidas) y 5 (la fila de "sin caché" pasa a estar
+confirmada con medición, y se agrega la fila del criterio de rendimiento).

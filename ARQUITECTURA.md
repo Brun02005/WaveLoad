@@ -336,6 +336,40 @@ sobre las columnas de análisis, esto se sostiene en el orden de magnitud objeti
 la práctica no se sostiene, la salida es materializar por collection con invalidación por
 evento, no cambiar el modelo.
 
+**Dos detalles de compilación que valen 4x** (medidos, no supuestos —
+`tools/bench_queries.py` sobre una librería sintética de 50.000 tracks y 307.744
+asignaciones generada con `tools/make_synthetic_library.py`):
+
+1. **El predicado de nivel superior no se envuelve en `COALESCE`.** Un `WHERE` ya descarta
+   las filas que evalúan a NULL, así que envolverlo es redundante — y le impide a SQLite
+   usar el índice de la columna. Sólo el `NOT` necesita el colapso a dos valores, y lo
+   aplica sobre su propio hijo.
+2. **Los nodos `tag` se compilan a `id IN (subconsulta)`, no a `EXISTS` correlacionado.**
+   Semánticamente equivalentes (`track_tags.track_id` es parte de la PK, nunca es NULL),
+   pero el `EXISTS` se re-evalúa una vez por track mientras que la subconsulta se
+   materializa una vez y SQLite la cruza con un filtro de Bloom.
+
+Juntos bajan el peor caso medido de 1929 ms a 518 ms sobre 50.000 tracks, y la pila de
+ejemplo de 4.3 de 579 ms a 80 ms.
+
+**Latencia medida** (peor caso de 15 corridas):
+
+| Escenario | 784 tracks (librería real) | 50.000 tracks (sintética) |
+|---|---|---|
+| Un tag derivado | 1,6 ms | 72 ms |
+| Rango de BPM | 1,1 ms | 296 ms |
+| La pila de ejemplo de 4.3 | 1,8 ms | 80 ms |
+| Predicado hostil (8 tags en OR + rango + 2 negaciones) | 3,4 ms | 518 ms |
+| **Primera página (`LIMIT 200`) del predicado hostil** | — | **22 ms** |
+| **Primera página del rango de BPM** | — | **0,6 ms** |
+
+Lo que la tabla dice es que **el costo no está en materializar filas sino en recorrer**:
+`COUNT(*)` y traer todos los ids cuestan casi lo mismo (250 ms vs 275 ms para el rango de
+BPM), mientras que la primera página cuesta tres órdenes de magnitud menos. La UI que
+pagina resultados no tiene problema de latencia ni a 50.000 tracks; el que sí lo tiene es
+el **conteo exacto por capa** que quiere mostrar el builder, porque un `COUNT` sobre el
+resultado completo no puede cortar temprano.
+
 ### 4.6 Persistencia
 
 Todo vive en la misma base SQLite de la librería (`waveload_library.db`), agregado por
@@ -409,7 +443,8 @@ resucita tags que el usuario ya había borrado.
 | **Capas apilables** como forma de la query | Una sola expresión booleana AND/OR/NOT | Cada paso intermedio es visible, desactivable y reordenable. Permite entender por qué un track está o no está en el resultado, que es exactamente donde falla la smart playlist tradicional | Que reordenar y desactivar capas no se use nunca en la práctica |
 | **`SmartCollection` y `Crate` como entidades separadas** | Modelo unificado (query dinámica + pins + exclusiones en una sola entidad) | Semántica sin ambigüedad en cada una: una es dinámica y siempre viva, el otro es una lista fija que no cambia sola. Familiar para quien viene de Rekordbox | Que en la práctica todas las smart collections terminen convertidas a crates para poder tocarlas a mano: indicaría que hacía falta el híbrido con pins |
 | **Query persistida como AST en JSON, compilada a SQL** | (a) DSL de texto parseado en runtime; (b) evaluación en memoria en Python | El AST es la representación única que alimenta tanto un builder visual como un futuro DSL. Compilar a SQL delega el trabajo a SQLite, que es lo que escala a 50.000+ tracks; evaluar en Python obligaría a cargar la librería entera en memoria | Que aparezcan predicados no expresables en SQL (por ejemplo similitud por embeddings), forzando un paso híbrido de evaluación en Python |
-| **Sin caché ni materialización de resultados** | Materializar el resultado de cada collection con invalidación por evento | Un recálculo siempre correcto es preferible a una caché que puede quedar desincronizada. La complejidad de invalidación no se justifica hasta medir que hace falta | Medir la evaluación por encima del umbral de latencia aceptable sobre una librería real de decenas de miles de tracks |
+| **Sin caché ni materialización de resultados** *(confirmada con medición, 2026-09-09)* | Materializar el resultado de cada collection con invalidación por evento | Un recálculo siempre correcto es preferible a una caché que puede quedar desincronizada. Ya no es sólo un argumento: medido sobre 50.000 tracks sintéticos, la primera página de resultados sale en 0,6–22 ms y el peor predicado completo en 518 ms (ver 4.5) | Que el conteo exacto por capa, que es el único caso que no puede cortar temprano, resulte inusable en el builder. La salida sería materializar el conteo, no el resultado |
+| **Criterio de rendimiento: 100 ms para la primera página, 1 s para el conteo por capa, medido sobre 50.000 tracks** *(provisional, 2026-09-09)* | (a) Sin criterio; (b) un solo número para toda evaluación | Son dos operaciones con perfiles distintos: paginar puede cortar temprano y contar no. Un solo número obligaría a fijarlo en el peor de los dos y a rediseñar por una operación que corre en segundo plano. La librería de referencia son 50.000 tracks porque es la escala objetivo declarada, no los 784 de hoy | Que el uso real muestre que el conteo por capa tiene que ser instantáneo para que el builder se sienta bien: ahí el presupuesto de 1 s no alcanza y hay que materializar el conteo |
 | **Tags namespaced `key:value`, namespaces controlados** | (a) Tags planos libres; (b) namespaces y valores ambos fijados por esquema | Los planos se desordenan solos apenas la librería crece. Controlar también los valores obliga a editar un esquema antes de poder etiquetar, lo que rompe el flujo rápido | Que la cantidad de namespaces crezca tanto que dejen de ser vocabulario y pasen a ser ruido |
 | **Los tags se escriben también al ID3** | (a) Solo en la DB de WaveLoad; (b) materializarlos únicamente al exportar | El trabajo de curaduría es lo más caro de reproducir y tiene que sobrevivir a la herramienta. Mutagen ya está en el stack | Corrupción o pérdida de metadata en escritura masiva; o que la escritura resulte demasiado lenta sobre librerías grandes |
 | **Grafo y set builder como consumidores de Collections** | (a) Congelarlos fuera de v1; (b) mantenerlos como workspaces independientes | Dejan de competir con Collections como modelo de organización y pasan a ser una salida: se arma una collection y desde ahí se genera el grafo o el set. Conserva el código ya construido y probado | Que la integración cueste más que el valor que aporta: en ese caso se congelan |
