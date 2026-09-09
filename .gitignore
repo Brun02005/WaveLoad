@@ -1,0 +1,32 @@
+# Entorno
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Build / distribución
+build/
+dist/
+*.spec.bak
+
+# Datos de la librería (nunca se versionan: son del usuario)
+*.db
+*.db-wal
+*.db-shm
+waveload_cache.json
+
+# Logs y dumps
+*.log
+waveload_crash_dump.txt
+
+# Audio descargado
+mp3_downloads/
+
+# Editor
+.vscode/
+.claude/settings.local.json

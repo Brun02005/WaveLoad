@@ -1,0 +1,10 @@
+pyside6
+yt-dlp
+aiohttp
+mutagen
+pillow
+browser-cookie3
+librosa
+soundfile
+numpy
+networkx
