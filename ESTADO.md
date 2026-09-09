@@ -18,12 +18,9 @@ etiquetado → librería → análisis → grafo → set → export está constr
 
 **En qué estoy trabajando ahora:** en el arranque del motor de Collections. El modelo
 quedó elegido (tags/queries por capas) después de descartar grafos, smart albums, canvas
-espacial y línea de tiempo, pero **no hay una sola línea de código escrita**: no existen
-las tablas de tags, ni el AST, ni el compilador a SQL, ni la UI. El botón "Colecciones"
-está deliberadamente oculto en `ui/shell/sidebar.py` para no dejar un callejón sin salida
-en la navegación.
-
-Esta sesión produjo el paquete de contexto (`ARQUITECTURA.md` + este archivo).
+espacial y línea de tiempo. El proyecto ya está bajo git (primer commit `62ff75a`). El
+botón "Colecciones" sigue deliberadamente oculto en `ui/shell/sidebar.py` para no dejar un
+callejón sin salida en la navegación.
 
 ---
 
@@ -108,8 +105,14 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - Workspaces: Descargas, Librería, Grafo, Ajustes
 - `LibraryWorkspace` desacoplado vía `LibraryService`
 
-**Calidad**
-- 104 tests pasan (`pytest`, ~75 s), todos headless sobre servicios sin Qt
+**Calidad y repositorio**
+- **Repositorio git inicializado** (2026-09-09). Primer commit `62ff75a` con los 118
+  archivos de código; `.gitignore` excluye `*.db`, `*.log`, `mp3_downloads/`,
+  `waveload_cache.json`, `build/`, `dist/` y `.claude/settings.local.json`. Sin remoto.
+- **`requirements.txt` completo**: se agregaron `networkx` (lo importa
+  `services/graph_service.py`; estaba solo en `WaveLoad.spec`) y `numpy` (uso directo).
+  Verificado que los 9 imports de terceros del árbol tienen su paquete declarado.
+- 104 tests pasan (`pytest`, ~20 s), todos headless sobre servicios sin Qt
 - QA E2E en `qa_e2e.py`
 - `WaveLoad.spec` de PyInstaller existente, `console=False`, con manejo de logging para
   builds sin consola
@@ -134,10 +137,11 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - Conexión Collections → grafo / set builder / export
 
 **Deuda técnica identificada**
-- **El proyecto no está bajo control de versiones.** No hay repositorio git. Todo el
-  trabajo hecho hasta hoy no tiene historia ni forma de revertirse
-- `networkx` se importa en `services/graph_service.py` y se declara en `WaveLoad.spec`,
-  pero **falta en `requirements.txt`**: una instalación limpia rompe al abrir el grafo
+- `pillow` está declarado en `requirements.txt` y como hidden import en `WaveLoad.spec`,
+  pero ningún módulo importa `PIL`. Verificar si el build lo necesita de verdad o si es
+  peso muerto en el `.exe`
+- Falta verificar `requirements.txt` en un venv limpio de verdad (hoy solo se verificó que
+  todo import de terceros tiene paquete declarado, contra el entorno ya instalado)
 - `LibraryService.scan_library()` y `check_missing_files()` son stubs que solo loguean
 - La barra de búsqueda del toolbar está marcada como stub en el código
 - `Track.energy` es `int` (1–10) pero `track_analysis.energy_level` es `REAL`: la
@@ -191,29 +195,19 @@ dependencias, y las condiciones de uso de las plataformas de origen).
 
 ## 5. Próximos 3 pasos
 
-**1. Poner el proyecto bajo git y dejar el entorno reproducible.**
-`git init`, un `.gitignore` que excluya `.db`, `.log`, `build/`, `dist/`, `mp3_downloads/`
-y `__pycache__/`, y el primer commit de todo lo construido. Agregar `networkx` a
-`requirements.txt` y verificar en un entorno limpio que la app arranca y el grafo abre.
-Es barato y es la precondición de todo lo que sigue: el próximo paso escribe una migración
-sobre una base de datos con 784 tracks reales y hoy no hay forma de volver atrás.
-
-**2. Cerrar las decisiones 2, 3 y 4 de la sección anterior y escribir la migración de
-tags.**
+**1. Cerrar las decisiones 2, 3 y 4 y escribir la migración de tags.**
 Frame ID3, namespaces iniciales y lista de operadores. Con eso definido, escribir la
 migración idempotente que crea `tags`, `track_tags`, `collections`, `collection_layers`,
 `crates` y `crate_entries` con sus índices, siguiendo el patrón que ya existe en
 `infrastructure/database.py`. Correrla contra un backup antes que contra la base real.
 
-**3. Construir el camino más corto que se puede ver funcionando: tags derivados +
-una capa de query.**
-Un `TagService` que genere los tags derivados de BPM/clave/energía para los 781 tracks ya
-analizados, y un evaluador que resuelva una sola capa `filter` compilada a SQL, sin UI de
-builder todavía —basta con un test y una vista de resultados en la librería—. Esto valida
-de punta a punta el AST, el compilador y el esquema con datos reales antes de invertir en
-la interfaz, y da la primera medición honesta de rendimiento.
+**2. `TagService` + tags derivados sobre los 781 tracks analizados.**
+Servicio puro en `services/` que traduzca BPM, clave Camelot y energía a tags `derived`,
+idempotente (re-correrlo no duplica), con tests headless sobre una DB temporal.
 
----
+**3. AST + compilador a SQL + evaluador de una capa `filter`.**
+Validar de punta a punta el esquema, el AST y el compilador con datos reales antes de
+invertir en UI. Primera medición honesta de rendimiento sobre los 784 tracks.
 
 ## 6. Log de handoffs
 
@@ -224,3 +218,15 @@ la interfaz, y da la primera medición honesta de rendimiento.
 **Bloqueado en:** …
 **Siguiente:** …
 -->
+
+### 2026-09-09 — unidad 1: git + entorno reproducible
+**Hecho:** `git init` en la raíz (sin remoto, no se pushea a ningún lado). `.gitignore`
+ampliado para excluir datos del usuario (`*.db`, `mp3_downloads/`, `waveload_cache.json`),
+logs y artefactos de build. Primer commit `62ff75a` con 118 archivos. `requirements.txt`
+completado con `networkx` y `numpy`. Smoke test de import de los 12 módulos principales +
+suite completa: 104/104 en verde.
+**Decidido:** no se versionan las `.db` — la librería es dato del usuario, no del
+repositorio. Los backups siguen viviendo sueltos en la raíz hasta que haya política de
+retención.
+**Bloqueado en:** nada.
+**Siguiente:** cerrar decisiones 2, 3 y 4 y escribir la migración de tags.
