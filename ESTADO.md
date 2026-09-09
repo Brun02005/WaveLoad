@@ -14,7 +14,7 @@
 **Dónde está el proyecto:** la infraestructura core está congelada y funcionando
 (sprints 1 a 4.4.1 cerrados). El pipeline completo de descarga → conversión →
 etiquetado → librería → análisis → grafo → set → export está construido y probado:
-223 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
+284 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
 automáticos ya asignados**.
 
 **En qué estoy trabajando ahora:** en el arranque del motor de Collections. El modelo
@@ -120,6 +120,10 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
   `bpm_bucket` / `key_value` / `energy_band` / `derived_tags` / `inherited_tags`, y el
   servicio con `sync_derived`, `sync_inherited`, `backfill_derived` y `backfill_inherited`
   (transacción única, reporte con contadores, callback de progreso)
+- **AST de predicados** en `domain/query_ast.py`: los 9 operadores cerrados de la
+  sección 4.4 de `ARQUITECTURA.md`, con validación estricta (operador, campo, forma y
+  llaves inesperadas), `to_dict`/`parse` round-trip, `walk()` y `describe()` legible.
+  `AST_VERSION = 1`. 61 tests
 - **`SqliteTagRepository`** (`storage/tag_repository.py`): vocabulario, asignaciones y
   `set_tags_for_source`, que es la operación que hace idempotente el recálculo — borra
   sólo filas de su propia fuente, así que lo manual nunca se toca
@@ -139,7 +143,7 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - **`requirements.txt` completo**: se agregaron `networkx` (lo importa
   `services/graph_service.py`; estaba solo en `WaveLoad.spec`) y `numpy` (uso directo).
   Verificado que los 9 imports de terceros del árbol tienen su paquete declarado.
-- **223 tests pasan** (`pytest`, ~31 s), todos headless sobre servicios sin Qt
+- **284 tests pasan** (`pytest`, ~32 s), todos headless sobre servicios sin Qt
   (baseline de la sesión: 104)
 - QA E2E en `qa_e2e.py`
 - `WaveLoad.spec` de PyInstaller existente, `console=False`, con manejo de logging para
@@ -152,7 +156,6 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 ### Pendiente
 
 **Motor de Collections**
-- Definición del AST y su serialización
 - Compilador de AST a SQL parametrizado
 - Evaluador de la pila de capas (fold con `filter` / `exclude` / `union`)
 - Servicio de tagging **manual** (asignar/quitar desde la UI, individual y en lote)
@@ -230,22 +233,20 @@ defendible, y están para revertirse si el uso real las contradice.
 
 ## 5. Próximos 3 pasos
 
-**1. AST: definición, validación y serialización.**
-`services/query_ast.py` con los 9 operadores de la sección 4.4 de `ARQUITECTURA.md`
-(`and`, `or`, `not`, `tag`, `tag_any`, `range`, `compare`, `text`, `source`), parseo desde
-JSON con errores entendibles y round-trip. Sin SQL todavía. Es lo que desbloquea el
-compilador y, más adelante, tanto el builder visual como un eventual DSL de texto.
+**1. Compilador de AST a SQL.**
+`services/query_compiler.py`: cada nodo a un fragmento parametrizado (valores bindeados,
+nunca interpolados). Los `tag` a `EXISTS (SELECT 1 FROM track_tags ...)`, los
+`range`/`compare` a condiciones sobre `tracks` / `track_analysis`, los booleanos a
+`AND`/`OR`/`NOT` anidados. Tests contra una DB temporal poblada.
 
-**2. Compilador de AST a SQL + evaluador de la pila de capas.**
-Cada nodo a un fragmento parametrizado (valores bindeados, nunca interpolados); las capas
-encadenadas como CTEs con `filter` / `exclude` / `union`; `sort` y `limit` una sola vez al
-final. Validar contra los 784 tracks reales, que ahora tienen 3127 tags con qué filtrar de
-verdad, y tomar la primera medición honesta de latencia.
+**2. Evaluador de la pila de capas.**
+El fold `filter` / `exclude` / `union` encadenado como CTEs, con `sort` y `limit` aplicados
+una sola vez al final, y el conteo por capa que necesita el builder. Medir latencia contra
+los 784 tracks reales, que ya tienen 3127 tags con qué filtrar de verdad.
 
 **3. Enganchar el tagging automático al pipeline.**
 `sync_derived` al terminar el análisis de un track y `sync_inherited` al importar o
-descargar, para que un track nuevo nazca etiquetado sin depender de correr el backfill a
-mano.
+descargar, para que un track nuevo nazca etiquetado sin depender del backfill manual.
 
 ## 6. Log de handoffs
 
@@ -326,3 +327,31 @@ columna. Verificarlo antes de dar por rota la herencia de playlist.
 
 **`ARQUITECTURA.md` no cambió en esta unidad** (las decisiones de buckets y bandas son
 parámetros de implementación, no arquitectura; quedan registradas acá).
+
+### 2026-09-09 — unidad 4: AST de predicados
+**Hecho:** `domain/query_ast.py` con los nueve operadores cerrados (`and`, `or`, `not`,
+`tag`, `tag_any`, `range`, `compare`, `text`, `source`), constructores cómodos (`and_`,
+`or_`, `tag`, `range_`, …), serialización `to_dict()` / `parse()` con round-trip
+verificado para cada tipo de nodo, `walk()` en preorden y `describe()` legible.
+61 tests nuevos; suite total 284/284 en verde.
+
+**Decidido (provisional):**
+- **El AST vive en `domain/`, no en `services/`.** Es estructura de datos con reglas de
+  validación, no lógica de negocio, y `domain` es la capa sin dependencias hacia afuera —
+  lo que permite que `services/query_compiler.py` dependa de él y no al revés. El
+  compilador sí va en `services/`.
+- **El parseo es estricto y falla fuerte.** Una llave inesperada, un operador desconocido o
+  un rango invertido levantan `QueryASTError` con mensaje en castellano. Una collection
+  guardada que no se puede evaluar tiene que decirlo; devolver resultados incompletos en
+  silencio es peor que un error.
+- `range` es un intervalo **cerrado** (min y max inclusive) y admite un solo extremo.
+- El valor de un nodo `text` **no** se slugifica (a diferencia de un tag): es texto de
+  búsqueda, no identidad.
+- `in_collection` está fuera de v1 y hay un test que verifica que su AST es rechazado, no
+  ignorado.
+
+**Bloqueado en:** nada.
+**Siguiente:** el compilador de AST a SQL.
+
+**`ARQUITECTURA.md` no cambió en esta unidad**: el AST implementa exactamente la sección
+4.4 tal como quedó escrita en la unidad 2.
