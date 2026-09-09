@@ -14,7 +14,7 @@
 **Dónde está el proyecto:** la infraestructura core está congelada y funcionando
 (sprints 1 a 4.4.1 cerrados). El pipeline completo de descarga → conversión →
 etiquetado → librería → análisis → grafo → set → export está construido y probado:
-329 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
+404 tests pasan, la librería real tiene 784 tracks con 781 analizados y **3127 tags
 automáticos ya asignados**.
 
 **En qué estoy trabajando ahora:** en el arranque del motor de Collections. El modelo
@@ -43,9 +43,9 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
       ninguno tiene `source_playlist_name` poblado todavía). Falta engancharlo al import y
       a la descarga
 - [ ] Tags por IA: clasificación de género/mood funcionando end-to-end
-- [ ] Builder de capas: crear, reordenar, activar/desactivar y borrar capas de una
-      SmartCollection, con el conteo de resultados visible por capa
-- [ ] Evaluación compilada a SQL, con AST persistido y versionado
+- [~] Builder de capas: la lógica está entera y probada (crear, reordenar,
+      activar/desactivar, borrar, y el conteo por capa en una sola consulta); falta la UI
+- [~] Evaluación compilada a SQL, con AST versionado; falta persistir las collections
 - [ ] Crates manuales: crear, agregar tracks, reordenar, borrar
 - [ ] Escritura de tags al ID3
 
@@ -131,6 +131,13 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
   que lo verifica con un `DROP TABLE` de prueba), `build_track_ids_query` y
   `build_count_query`. 45 tests, la mayoría ejecutando SQL de verdad contra una librería
   de prueba con casos borde (track sin analizar, `%` tipeado por el usuario, etc.)
+- **Modelo de Collections** en `domain/collections.py`: `SmartCollection` (pila
+  ordenada, inmutable, con `with_layer` / `without_layer` / `with_layer_toggled` /
+  `with_layer_moved`), `QueryLayer`, `LayerMode`, `SortSpec` y `Crate`
+- **Evaluador de la pila** en `services/collection_evaluator.py`: el fold
+  `filter` / `exclude` / `union` compilado como cadena de CTEs, `sort` y `limit` una sola
+  vez al final, paginado con `offset`, conteo por capa en una sola consulta y `explain()`
+  para diagnosticar. 69 tests
 - **Medición de rendimiento real** con `tools/bench_queries.py` y
   `tools/make_synthetic_library.py` (librería sintética de 50.000 tracks / 307.744 tags,
   con la distribución de BPM de la real). Ver la tabla de la sección 4.5 de
@@ -154,7 +161,7 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 - **`requirements.txt` completo**: se agregaron `networkx` (lo importa
   `services/graph_service.py`; estaba solo en `WaveLoad.spec`) y `numpy` (uso directo).
   Verificado que los 9 imports de terceros del árbol tienen su paquete declarado.
-- **329 tests pasan** (`pytest`, ~43 s), todos headless sobre servicios sin Qt
+- **404 tests pasan** (`pytest`, ~54 s), todos headless sobre servicios sin Qt
   (baseline de la sesión: 104)
 - QA E2E en `qa_e2e.py`
 - `WaveLoad.spec` de PyInstaller existente, `console=False`, con manejo de logging para
@@ -167,8 +174,14 @@ empaquetado y de primer arranque que no existirían en una herramienta privada.
 ### Pendiente
 
 **Motor de Collections**
-- Evaluador de la pila de capas (fold con `filter` / `exclude` / `union`)
-- Persistencia de collections y crates (el esquema está, falta el repositorio)
+- Persistencia de collections y crates: el esquema está y el modelo de dominio también,
+  falta el repositorio que los lea y escriba
+- **Optimización identificada y medida, no implementada:** una capa cuyo predicado mira
+  sólo columnas de análisis podría leer directo de `track_analysis` (322 ms → 156 ms en
+  una pila de 3 capas sobre 50.000 tracks). No es correcta en general —un track sin fila
+  de análisis desaparecería, y `bpm is_null` o un `range` bajo un `NOT` tienen que
+  devolverlo— así que exige detectar antes que el predicado sea "positivo". Ver 4.5 de
+  `ARQUITECTURA.md`
 - Servicio de tagging **manual** (asignar/quitar desde la UI, individual y en lote)
 - Enganchar `sync_derived` al final del análisis de un track y `sync_inherited` al
   import/descarga, para que un track nuevo nazca etiquetado sin correr el backfill
@@ -402,3 +415,37 @@ margen. La decisión de no cachear queda confirmada con evidencia, no con un arg
 **Secciones de `ARQUITECTURA.md` que cambiaron:** 4.5 (dos detalles de compilación con sus
 números, y la tabla de latencias medidas) y 5 (la fila de "sin caché" pasa a estar
 confirmada con medición, y se agrega la fila del criterio de rendimiento).
+
+### 2026-09-09 — unidad 6: modelo de Collections y evaluador de la pila de capas
+**Hecho:** `domain/collections.py` (`SmartCollection`, `QueryLayer`, `LayerMode`,
+`SortSpec`, `Crate`) y `services/collection_evaluator.py`, que compila el fold de capas a
+una cadena de CTEs y lo ejecuta. Incluye paginado, conteo total, conteo por capa en una
+sola consulta y `explain()`. 75 tests nuevos; suite total 404/404 en verde.
+
+**Decidido (provisional):**
+- **Las entidades son inmutables.** `with_layer`, `without_layer`, `with_layer_toggled` y
+  `with_layer_moved` devuelven copias. Una pila de capas que se edita en el lugar hace
+  imposible un "deshacer" y muy fácil que la UI y la DB se desincronicen.
+- **Las posiciones se compactan al borrar y al mover.** Siempre son 0..n-1, sin huecos,
+  que es lo que el índice UNIQUE `(collection_id, position)` del esquema espera.
+- **`NULLS LAST` en el orden.** Un track sin analizar no debería encabezar un orden por
+  BPM sólo por no tener BPM.
+
+**Lo que la medición dijo y no era lo esperado:** el hallazgo de la unidad 5 —que paginar
+es barato— **no se traslada a una pila de capas**. Sobre 50.000 tracks, la pila de ejemplo
+de tres capas tarda 367 ms tanto para el resultado completo como para la primera página:
+la cadena de CTEs obliga a materializar cada capa antes de poder cortar, y el `ORDER BY`
+necesita el resultado entero. O sea: **el presupuesto de 100 ms para la primera página se
+cumple con un predicado suelto y no se cumple con una pila de tres capas.** Queda anotado
+como tal, sin mover el presupuesto para que dé.
+
+Dos elisiones ya aplicadas bajaron esa pila de 399 ms a 367 ms: no emitir la CTE de la
+base cuando la primera capa es `filter`, y no arrastrar el `LEFT JOIN track_analysis` en
+capas que sólo miran tags. La tercera —leer directo de `track_analysis`— vale 2x pero no
+es correcta en general y está documentada con su condición de aplicabilidad en 4.5.
+
+**Bloqueado en:** nada.
+**Siguiente:** el repositorio de collections y crates.
+
+**Sección de `ARQUITECTURA.md` que cambió:** 4.5, con la tabla de latencias de la pila de
+capas, las dos elisiones aplicadas y la optimización pendiente con su caveat.

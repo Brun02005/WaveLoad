@@ -365,10 +365,41 @@ ejemplo de 4.3 de 579 ms a 80 ms.
 
 Lo que la tabla dice es que **el costo no está en materializar filas sino en recorrer**:
 `COUNT(*)` y traer todos los ids cuestan casi lo mismo (250 ms vs 275 ms para el rango de
-BPM), mientras que la primera página cuesta tres órdenes de magnitud menos. La UI que
-pagina resultados no tiene problema de latencia ni a 50.000 tracks; el que sí lo tiene es
-el **conteo exacto por capa** que quiere mostrar el builder, porque un `COUNT` sobre el
-resultado completo no puede cortar temprano.
+BPM), mientras que la primera página cuesta tres órdenes de magnitud menos.
+
+**Pero eso vale para un predicado suelto, no para una pila de capas.** Medido sobre la
+misma librería sintética, la pila de ejemplo de 4.3 —tres capas— da:
+
+| Operación (3 capas, 50.000 tracks) | Mediana |
+|---|---|
+| Resultado completo (4991 filas, ordenado por BPM) | 367 ms |
+| Primera página `LIMIT 200`, ordenada | 367 ms |
+| Primera página `LIMIT 200`, sin orden | 286 ms |
+| Conteo total | 321 ms |
+| Conteo por capa (una sola consulta) | 670 ms |
+
+El `LIMIT` casi no ayuda: la cadena de CTEs obliga a materializar cada capa antes de poder
+cortar, y con un `ORDER BY` el resultado completo tiene que existir antes de tomar las
+primeras 200 filas. **El presupuesto de 100 ms para la primera página se cumple con un
+predicado suelto y no se cumple con una pila de tres capas a 50.000 tracks.** Está medido,
+no estimado, y es lo primero a atacar cuando el builder exista.
+
+**Dos elisiones que ya están aplicadas** (y que bajaron esa pila de 399 ms a 367 ms):
+
+- La CTE de la base no se emite cuando la primera capa activa es `filter`: intersecar con
+  la librería completa es no intersecar con nada.
+- El `LEFT JOIN track_analysis` sólo entra en las capas cuyo predicado mira `bpm`,
+  `energy` o `analyzed_at`. Una capa que sólo filtra por tags no lo necesita, y
+  arrastrarlo cuesta 2,3x.
+
+**La optimización que falta, y por qué no está hecha:** una capa cuyo predicado mira
+*sólo* columnas de análisis podría leer directo de `track_analysis` sin pasar por `tracks`
+(medido a mano: 322 ms → 156 ms en esa misma pila). No se implementó porque no es
+correcta en general: un track sin fila en `track_analysis` desaparecería de la consulta, y
+hay predicados que deben devolverlo —`bpm is_null`, o cualquier `range` adentro de un
+`NOT`—. Aplicarla exige detectar antes que el predicado sea "positivo": sin `is_null` y
+sin `NOT` por encima. Es una optimización real con una condición de aplicabilidad real,
+no un olvido.
 
 ### 4.6 Persistencia
 
