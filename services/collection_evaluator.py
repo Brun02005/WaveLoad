@@ -57,7 +57,10 @@ class LayerCount:
 
     @property
     def label(self) -> str:
-        return f"[{self.position}] {self.description} → {self.after}"
+        # Flecha ASCII a propósito: esta etiqueta termina en logs, y la consola
+        # de Windows es cp1252 — un "→" ahí levanta UnicodeEncodeError. El
+        # proyecto ya tuvo problemas de logging en builds sin consola.
+        return f"[{self.position}] {self.description} -> {self.after}"
 
 
 @dataclass(frozen=True)

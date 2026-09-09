@@ -466,11 +466,20 @@ class TestLayerCounts:
         ))
         assert evaluator.layer_counts(collection)[-1].after == evaluator.count(collection)
 
+    def test_label_uses_an_ascii_arrow(self, library, evaluator):
+        # La etiqueta puede terminar en un log, y la consola de Windows es
+        # cp1252: un "→" ahí levanta UnicodeEncodeError.
+        collection = SmartCollection(name="X", layers=(
+            _layer(tag("genre", "techno"), position=0),
+        ))
+        etiqueta = evaluator.layer_counts(collection)[1].label
+        etiqueta.encode("cp1252")  # no debe levantar
+
     def test_label_is_readable(self, library, evaluator):
         collection = SmartCollection(name="X", layers=(
             _layer(tag("genre", "techno"), position=0),
         ))
-        assert evaluator.layer_counts(collection)[1].label == "[0] filtrar: genre:techno → 4"
+        assert evaluator.layer_counts(collection)[1].label == "[0] filtrar: genre:techno -> 4"
 
 
 class TestGeneratedSql:
