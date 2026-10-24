@@ -4,10 +4,12 @@ from PySide6.QtWidgets import (
     QCheckBox, QPushButton, QFileDialog, QFrame
 )
 from PySide6.QtCore import Qt, QSettings, Signal
+from ui.components.buttons import WLSecondaryButton
 from ui.theme.colors import (
-    SURFACE_2, SURFACE_3, SURFACE_4, BORDER_DEFAULT, BORDER_STRONG,
-    TEXT_PRIMARY, TEXT_SECONDARY, STATUS_INFO
+    SURFACE_1, SURFACE_3, BORDER_DEFAULT, BORDER_SUBTLE,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
 )
+from ui.theme.icons import Icons
 
 class SettingsPage(QWidget):
     def __init__(self, settings_service, parent=None):
@@ -19,166 +21,142 @@ class SettingsPage(QWidget):
         self._connect_signals()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        # El contenido va en una columna de ancho legible, no estirado a toda
+        # la ventana: una fila de ajustes de 1200 px separa demasiado la
+        # etiqueta de su control.
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(32, 28, 32, 28)
+        column = QWidget()
+        column.setMaximumWidth(760)
+        outer.addWidget(column, 1)
+        outer.addStretch(0)
+
+        layout = QVBoxLayout(column)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(28)
         layout.setAlignment(Qt.AlignTop)
 
-        # Título principal
-        title_label = QLabel("Ajustes")
-        title_label.setObjectName("settingsTitle")
-        layout.addWidget(title_label)
-
-        # Separator
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-        line.setStyleSheet(f"background-color: {BORDER_DEFAULT}; height: 1px; border: none;")
-        layout.addWidget(line)
-
-        # 1. Directorio de Descargas
-        dir_section = QVBoxLayout()
-        dir_section.setSpacing(8)
-        
-        dir_title = QLabel("Carpeta de Descargas")
-        dir_title.setObjectName("sectionTitle")
-        
-        dir_desc = QLabel("Ubicación donde se guardarán todas las pistas descargadas y convertidas.")
-        dir_desc.setObjectName("settingDesc")
-        
-        dir_controls = QHBoxLayout()
-        dir_controls.setSpacing(10)
-        
+        # 1. Descargas
         self.dir_path_label = QLabel()
         self.dir_path_label.setObjectName("dirPathLabel")
         self.dir_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        
-        self.change_dir_btn = QPushButton("Cambiar...")
-        self.change_dir_btn.setObjectName("changeDirBtn")
-        self.change_dir_btn.setCursor(Qt.PointingHandCursor)
-        
-        dir_controls.addWidget(self.dir_path_label, 1)
-        dir_controls.addWidget(self.change_dir_btn)
-        
-        dir_section.addWidget(dir_title)
-        dir_section.addWidget(dir_desc)
-        dir_section.addLayout(dir_controls)
-        layout.addLayout(dir_section)
+        self.change_dir_btn = WLSecondaryButton("Cambiar", icon=Icons.FOLDER)
 
-        # 2. Calidad de Audio
-        quality_section = QVBoxLayout()
-        quality_section.setSpacing(8)
-        
-        quality_title = QLabel("Calidad de Conversión")
-        quality_title.setObjectName("sectionTitle")
-        
-        quality_desc = QLabel("Tasa de bits objetivo para la conversión de audio a MP3.")
-        quality_desc.setObjectName("settingDesc")
-        
         self.quality_combo = QComboBox()
         self.quality_combo.setObjectName("qualityCombo")
-        self.quality_combo.addItem("320 kbps (Máxima)", "320")
-        self.quality_combo.addItem("256 kbps (Alta)", "256")
-        self.quality_combo.addItem("192 kbps (Estándar)", "192")
-        self.quality_combo.addItem("128 kbps (Ligera)", "128")
-        
-        quality_section.addWidget(quality_title)
-        quality_section.addWidget(quality_desc)
-        quality_section.addWidget(self.quality_combo)
-        layout.addLayout(quality_section)
+        self.quality_combo.setFixedWidth(200)
+        self.quality_combo.addItem("320 kbps · máxima", "320")
+        self.quality_combo.addItem("256 kbps · alta", "256")
+        self.quality_combo.addItem("192 kbps · estándar", "192")
+        self.quality_combo.addItem("128 kbps · liviana", "128")
 
-        # 3. Autenticación / Cookies
-        cookies_section = QVBoxLayout()
-        cookies_section.setSpacing(6)
-        
-        cookies_title = QLabel("Seguridad y Descargas")
-        cookies_title.setObjectName("sectionTitle")
-        
-        self.cookies_checkbox = QCheckBox("Usar cookies del navegador")
+        self.cookies_checkbox = QCheckBox()
         self.cookies_checkbox.setObjectName("cookiesCheckbox")
         self.cookies_checkbox.setCursor(Qt.PointingHandCursor)
-        
-        cookies_desc = QLabel("Inyecta cookies de sesión activa para evitar bloqueos temporales en YouTube.")
-        cookies_desc.setObjectName("settingDesc")
-        
-        cookies_section.addWidget(cookies_title)
-        cookies_section.addWidget(self.cookies_checkbox)
-        cookies_section.addWidget(cookies_desc)
-        layout.addLayout(cookies_section)
 
-        # 4. Preferencias del Sistema
-        prefs_section = QVBoxLayout()
-        prefs_section.setSpacing(6)
-        
-        prefs_title = QLabel("Preferencias")
-        prefs_title.setObjectName("sectionTitle")
-        
-        self.auto_open_checkbox = QCheckBox("Abrir carpeta al finalizar")
+        carpeta = QWidget()
+        carpeta_row = QHBoxLayout(carpeta)
+        carpeta_row.setContentsMargins(0, 0, 0, 0)
+        carpeta_row.setSpacing(8)
+        carpeta_row.addWidget(self.dir_path_label, 1)
+        carpeta_row.addWidget(self.change_dir_btn)
+
+        layout.addWidget(self._section("Descargas", [
+            self._row("Carpeta", "Dónde se guardan las pistas descargadas y convertidas.",
+                      carpeta, stacked=True),
+            self._row("Calidad del MP3", "Tasa de bits de la conversión.", self.quality_combo),
+            self._row("Usar cookies del navegador",
+                      "Evita bloqueos temporales de YouTube usando tu sesión abierta.",
+                      self.cookies_checkbox),
+        ]))
+
+        # 2. Al terminar
+        self.auto_open_checkbox = QCheckBox()
         self.auto_open_checkbox.setObjectName("autoOpenCheckbox")
         self.auto_open_checkbox.setCursor(Qt.PointingHandCursor)
-        
-        prefs_section.addWidget(prefs_title)
-        prefs_section.addWidget(self.auto_open_checkbox)
-        layout.addLayout(prefs_section)
+        layout.addWidget(self._section("Al terminar una tanda", [
+            self._row("Abrir la carpeta", "Muestra los archivos nuevos en el Explorador.",
+                      self.auto_open_checkbox),
+        ]))
+
+    def _section(self, title: str, rows: list) -> QWidget:
+        box = QWidget()
+        v = QVBoxLayout(box)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(10)
+        label = QLabel(title)
+        label.setObjectName("sectionTitle")
+        v.addWidget(label)
+        card = QFrame()
+        card.setObjectName("settingsCard")
+        c = QVBoxLayout(card)
+        c.setContentsMargins(0, 0, 0, 0)
+        c.setSpacing(0)
+        for i, row in enumerate(rows):
+            if i:
+                sep = QFrame()
+                sep.setObjectName("settingsSep")
+                sep.setFixedHeight(1)
+                c.addWidget(sep)
+            c.addWidget(row)
+        v.addWidget(card)
+        return box
+
+    def _row(self, title: str, desc: str, control: QWidget, stacked: bool = False) -> QWidget:
+        """Una fila: título y explicación a la izquierda, el control a la
+        derecha. ``stacked`` pone el control debajo, para los que son anchos."""
+        row = QWidget()
+        outer = QVBoxLayout(row) if stacked else QHBoxLayout(row)
+        outer.setContentsMargins(16, 14, 16, 14)
+        outer.setSpacing(10 if stacked else 16)
+        texts = QVBoxLayout()
+        texts.setSpacing(2)
+        t = QLabel(title)
+        t.setObjectName("rowTitle")
+        d = QLabel(desc)
+        d.setObjectName("settingDesc")
+        d.setWordWrap(True)
+        texts.addWidget(t)
+        texts.addWidget(d)
+        # En una fila horizontal los textos toman el ancho sobrante; apilada,
+        # no se estiran a lo alto.
+        outer.addLayout(texts, 0 if stacked else 1)
+        if stacked:
+            outer.addWidget(control)
+        else:
+            outer.addWidget(control, 0, Qt.AlignVCenter)
+        return row
 
     def _apply_styles(self):
         self.setStyleSheet(f"""
-            QLabel#settingsTitle {{
-                color: {TEXT_PRIMARY};
-                font-size: 26px;
-                font-weight: 700;
-            }}
             QLabel#sectionTitle {{
-                color: {TEXT_PRIMARY};
-                font-size: 14px;
-                font-weight: 600;
-                margin-top: 10px;
-            }}
-            QLabel#dirPathLabel {{
-                background-color: {SURFACE_2};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: 6px;
-                padding: 8px 12px;
-                color: {TEXT_PRIMARY};
-                font-family: Consolas, monospace;
+                color: {TEXT_SECONDARY};
                 font-size: 12px;
+                font-weight: 600;
             }}
-            QPushButton#changeDirBtn {{
+            QFrame#settingsCard {{
                 background-color: {SURFACE_3};
-                border: 1px solid {BORDER_STRONG};
-                color: {TEXT_PRIMARY};
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 600;
-                font-size: 12px;
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 10px;
             }}
-            QPushButton#changeDirBtn:hover {{
-                background-color: {SURFACE_4};
+            QFrame#settingsSep {{
+                background-color: {BORDER_SUBTLE};
+                border: none;
             }}
-            QComboBox#qualityCombo {{
-                background-color: {SURFACE_2};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: 6px;
-                padding: 6px 10px;
+            QLabel#rowTitle {{
                 color: {TEXT_PRIMARY};
-                min-width: 200px;
-            }}
-            QComboBox#qualityCombo QAbstractItemView {{
-                background-color: {SURFACE_2};
-                color: {TEXT_PRIMARY};
-                selection-background-color: {STATUS_INFO};
+                font-weight: 500;
             }}
             QLabel#settingDesc {{
-                color: {TEXT_SECONDARY};
-                font-size: 11px;
-                margin-left: 2px;
+                color: {TEXT_MUTED};
+                font-size: 12px;
             }}
-            QCheckBox {{
-                color: {TEXT_PRIMARY};
-                font-size: 13px;
-                font-weight: 500;
-                spacing: 8px;
-                margin-top: 4px;
+            QLabel#dirPathLabel {{
+                background-color: {SURFACE_1};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 6px;
+                padding: 7px 10px;
+                color: {TEXT_SECONDARY};
             }}
         """)
 

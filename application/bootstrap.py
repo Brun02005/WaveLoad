@@ -7,7 +7,9 @@ and wiring them together. Ensures singletons remain singletons.
 """
 
 from storage.sqlite_track_repository import SqliteTrackRepository
+from storage.collection_repository import SqliteCollectionRepository
 from storage.tag_repository import SqliteTagRepository
+from services.collection_service import CollectionService
 from services.auto_tagging_service import AutoTaggingService
 from services.tagging_service import TaggingService
 from services.track_service import TrackService
@@ -26,6 +28,7 @@ class ApplicationContainer:
         # 1. Repositories
         self.track_repository = SqliteTrackRepository()
         self.tag_repository = SqliteTagRepository()
+        self.collection_repository = SqliteCollectionRepository()
 
         # 2. Services / Use Cases
         self.settings_service = SettingsService()
@@ -39,6 +42,13 @@ class ApplicationContainer:
         # hay que conservar la referencia o el suscriptor muere con el objeto.
         self.tagging_service = TaggingService(self.tag_repository)
         self.auto_tagging_service = AutoTaggingService(self.tagging_service)
+
+        # 4. Motor de Collections
+        self.collection_service = CollectionService(
+            collection_repository=self.collection_repository,
+            track_repository=self.track_repository,
+            tag_repository=self.tag_repository,
+        )
 
 # Global Application Container
 app_container = ApplicationContainer()

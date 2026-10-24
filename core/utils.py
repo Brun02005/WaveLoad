@@ -137,32 +137,52 @@ def deduplicate_urls(urls: list[str]) -> list[str]:
     return result
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_YTDLP_PREFIX = re.compile(r"^(?:ERROR:\s*)?(?:\[[^\]]+\]\s*)?(?:[\w-]{6,}:\s*)?")
+
+# (fragmento en minúsculas del error de yt-dlp, mensaje para el usuario). El
+# orden importa: lo específico antes que lo genérico.
+_FRIENDLY = (
+    ("copyright", "Eliminado de YouTube por un reclamo de copyright."),
+    ("removed by the uploader", "El autor lo eliminó."),
+    ("account associated with this video has been terminated", "La cuenta que lo subió fue dada de baja."),
+    ("private video", "Video privado."),
+    ("members-only", "Sólo para miembros del canal."),
+    ("join this channel", "Sólo para miembros del canal."),
+    ("sign in to confirm your age", "Tiene restricción de edad: hace falta iniciar sesión en el navegador."),
+    ("not available in your country", "No está disponible en tu país."),
+    ("uploader has not made this video available", "No está disponible en tu país."),
+    ("video unavailable", "El video no está disponible."),
+    ("this video is unavailable", "El video no está disponible."),
+    ("this video is not available", "El video no está disponible."),
+    ("is not available", "El video no está disponible."),
+    ("unsupported url", "Enlace no soportado."),
+    ("http error 403", "YouTube rechazó la descarga (403). Probá activar las cookies del navegador."),
+    ("http error 404", "El video no existe (404)."),
+    ("http error 429", "YouTube está limitando las descargas. Esperá unos minutos."),
+    ("connection broken", "Se cortó la conexión. Probá de nuevo."),
+    ("timed out", "La conexión tardó demasiado. Probá de nuevo."),
+    ("getaddrinfo failed", "Sin conexión a internet."),
+    ("unable to download", "No se pudo descargar el video."),
+    ("ffmpeg", "FFmpeg no está instalado o no está en el PATH."),
+    ("cancelada por el usuario", "Cancelada por el usuario."),
+)
+
+
 def friendly_error_message(error_text: str) -> str:
-    text = (error_text or "").strip()
+    """El error de yt-dlp o FFmpeg en una frase que entiende un usuario.
 
+    yt-dlp mete códigos de color de terminal (``[0;31m``) y prefijos como
+    ``ERROR: [youtube] qruvRVkz_WQ:`` que en la interfaz sólo son ruido. Un error
+    que no se reconoce se devuelve limpio, sin traducir: es mejor el mensaje
+    original que uno inventado.
+    """
+    text = _ANSI.sub("", error_text or "").strip()
     lowered = text.lower()
-
-    if "unsupported url" in lowered:
-        return "Link no soportado."
-    if "private video" in lowered:
-        return "Video privado."
-    if "video unavailable" in lowered:
-        return "Video no disponible."
-    if "sign in to confirm your age" in lowered:
-        return "Video con restricción de edad."
-    if "this video is unavailable" in lowered:
-        return "Video no disponible."
-    if "http error 403" in lowered:
-        return "Acceso denegado por YouTube (403)."
-    if "http error 404" in lowered:
-        return "El video no existe (404)."
-    if "unable to download" in lowered:
-        return "No se pudo descargar el video."
-    if "ffmpeg" in lowered:
-        return "FFmpeg no está instalado o no está en PATH."
-    if "playlist" in lowered:
+    for fragment, message in _FRIENDLY:
+        if fragment in lowered:
+            return message
+    if "playlist" in lowered and "not supported" in lowered:
         return "Las playlists todavía no están soportadas."
-    if "cancelada por el usuario" in lowered:
-        return "Cancelada por el usuario."
-
-    return text or "Error desconocido."
+    cleaned = _YTDLP_PREFIX.sub("", text.splitlines()[0] if text else "").strip()
+    return cleaned or "Error desconocido."

@@ -77,10 +77,10 @@ MARGINS_SIDEBAR = (SPACE_LG, SPACE_XL, SPACE_LG, SPACE_XL)
 # Dimension Constants
 # ---------------------------------------------------------------------------
 
-SIDEBAR_WIDTH = 220
+SIDEBAR_WIDTH = 232
 """Fixed width for the navigation sidebar in pixels."""
 
-TOOLBAR_HEIGHT = 48
+TOOLBAR_HEIGHT = 56
 """Fixed height for the top toolbar in pixels."""
 
 CONTEXT_PANEL_MIN_WIDTH = 280
@@ -130,8 +130,8 @@ THUMBNAIL_HEIGHT = 50
 # Minimum Window Dimensions
 # ---------------------------------------------------------------------------
 
-MIN_WINDOW_WIDTH = 1280
+MIN_WINDOW_WIDTH = 1024
 """Minimum window width for the 5-panel layout."""
 
-MIN_WINDOW_HEIGHT = 760
+MIN_WINDOW_HEIGHT = 680
 """Minimum window height for the 5-panel layout."""

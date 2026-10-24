@@ -11,11 +11,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from ui.theme.spacing import CONTEXT_PANEL_MIN_WIDTH, MARGINS_CARD
-from ui.theme.icons import Icons
+from ui.theme.icons import Icons, pixmap
 from ui.theme.colors import (
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, SURFACE_1, BORDER_DEFAULT, BORDER_SUBTLE,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, SURFACE_3, BORDER_SUBTLE,
 )
-from ui.theme.typography import FONT_STACK_MONO
+from ui.components.empty_state import WLEmptyState
 from ui.components.panels import WLInfoRow
 from ui.components.buttons import WLIconButton
 from ui.components.tables import camelot_qcolors
@@ -27,7 +27,11 @@ class ContextPanel(QWidget):
         self._audio_player = None
         self._playback_key = None
         self._playback_is_local = False
+        self._playback_title = ""
+        self._playback_subtitle = ""
+        self.current_track_id = None
         self.setObjectName("wl_contextPanel")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setMinimumWidth(CONTEXT_PANEL_MIN_WIDTH)
         # Desktop layout: keep it fixed horizontally unless user drags splitter, expand vertically
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
@@ -45,38 +49,15 @@ class ContextPanel(QWidget):
         self.show_empty_state()
 
     def _build_empty_state(self):
-        page = QWidget()
-        l = QVBoxLayout(page)
-        l.setAlignment(Qt.AlignCenter)
-        
-        icon = QLabel(Icons.INFO)
-        icon.setStyleSheet(f"font-size: 32px; color: {TEXT_SECONDARY};")
-        icon.setAlignment(Qt.AlignCenter)
-        
-        text = QLabel("Selecciona una pista\npara ver detalles")
-        text.setObjectName("wl_contextSubtitle")
-        text.setAlignment(Qt.AlignCenter)
-        
-        l.addWidget(icon)
-        l.addWidget(text)
+        page = WLEmptyState(Icons.INFO, "Nada seleccionado",
+                            "Elegí una pista para ver sus detalles y con qué mezcla.",
+                            text_width=220)
         self.stack.addWidget(page)
         self.idx_empty = self.stack.indexOf(page)
 
     def _build_multi_state(self):
-        page = QWidget()
-        l = QVBoxLayout(page)
-        l.setAlignment(Qt.AlignCenter)
-        
-        icon = QLabel(Icons.COLLECTIONS)
-        icon.setStyleSheet(f"font-size: 32px; color: {TEXT_SECONDARY};")
-        icon.setAlignment(Qt.AlignCenter)
-        
-        self.multi_text = QLabel("Varias pistas seleccionadas")
-        self.multi_text.setObjectName("wl_contextSubtitle")
-        self.multi_text.setAlignment(Qt.AlignCenter)
-        
-        l.addWidget(icon)
-        l.addWidget(self.multi_text)
+        page = WLEmptyState(Icons.COLLECTIONS, "Varias pistas seleccionadas", text_width=220)
+        self.multi_page = page
         self.stack.addWidget(page)
         self.idx_multi = self.stack.indexOf(page)
 
@@ -97,14 +78,12 @@ class ContextPanel(QWidget):
         content_layout.setAlignment(Qt.AlignTop)
         
         # 1. Header (Artwork + Title + Artist)
-        self.artwork = QLabel(Icons.TRACK)
+        self.artwork = QLabel()
         self.artwork.setAlignment(Qt.AlignCenter)
-        self.artwork.setStyleSheet(f"""
-            background-color: {SURFACE_1}; 
-            border: 1px solid {BORDER_DEFAULT}; 
-            border-radius: 8px;
-            font-size: 48px;
-        """)
+        self.artwork.setPixmap(pixmap(Icons.TRACK, 40, TEXT_MUTED))
+        self.artwork.setStyleSheet(
+            f"background-color: {SURFACE_3}; border-radius: 12px;"
+        )
         self.artwork.setFixedSize(220, 220)
         
         art_l = QVBoxLayout()
@@ -123,9 +102,9 @@ class ContextPanel(QWidget):
         content_layout.addWidget(self.artist_label)
 
         play_row = QHBoxLayout()
-        self.play_btn = WLIconButton(Icons.PLAY)
+        self.play_btn = WLIconButton(Icons.PLAY, size=36, icon_px=16, color=TEXT_PRIMARY)
         self.play_btn.setEnabled(False)
-        self.play_btn.setToolTip("Reproducir")
+        self.play_btn.setToolTip("Escuchar")
         self.play_btn.clicked.connect(self._on_play_clicked)
         play_row.addWidget(self.play_btn)
         play_row.addStretch()
@@ -137,12 +116,14 @@ class ContextPanel(QWidget):
         # 2. Musical Metadata (BPM, Key, Genre, Remix)
         self.row_remix = WLInfoRow("Remix:")
         self.row_genre = WLInfoRow("Género:")
+        self.row_tags = WLInfoRow("Etiquetas:")
         self.row_bpm = WLInfoRow("BPM:")
-        self.row_key = WLInfoRow("Key:")
+        self.row_key = WLInfoRow("Tono:")
         self.row_duration = WLInfoRow("Duración:")
         
         content_layout.addWidget(self.row_remix)
         content_layout.addWidget(self.row_genre)
+        content_layout.addWidget(self.row_tags)
         content_layout.addWidget(self.row_bpm)
         content_layout.addWidget(self.row_key)
         content_layout.addWidget(self.row_duration)
@@ -205,7 +186,7 @@ class ContextPanel(QWidget):
     def _add_separator(self, layout):
         sep = QWidget()
         sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background-color: {BORDER_SUBTLE}; margin-top: 8px; margin-bottom: 8px;")
+        sep.setStyleSheet(f"background-color: {BORDER_SUBTLE};")
         layout.addWidget(sep)
 
     def set_compatibles(self, compatibles: list):
@@ -241,7 +222,7 @@ class ContextPanel(QWidget):
         chip.setFixedSize(38, 20)
         chip.setStyleSheet(
             f"background-color: {bg.name()}; color: {fg.name()}; border-radius: 10px; "
-            f"font-family: {FONT_STACK_MONO}; font-weight: 600; font-size: 11px;"
+            "font-weight: 600; font-size: 11px;"
         )
         h.addWidget(chip)
 
@@ -269,37 +250,45 @@ class ContextPanel(QWidget):
 
     def _on_play_clicked(self):
         if self._audio_player and self._playback_key:
-            self._audio_player.toggle_play_pause_for(self._playback_key, self._playback_is_local)
+            self._audio_player.toggle_play_pause_for(
+                self._playback_key, self._playback_is_local,
+                self._playback_title, self._playback_subtitle,
+            )
 
     def _on_playback_changed(self, _key: str):
         self._refresh_play_button()
 
     def _refresh_play_button(self):
         if not self._audio_player or not self._playback_key:
-            self.play_btn.setText(Icons.PLAY)
+            self.play_btn.set_icon(Icons.PLAY)
             return
         playing_this = (
             self._audio_player.current_key() == self._playback_key
             and self._audio_player.is_playing()
         )
-        self.play_btn.setText(Icons.PAUSE if playing_this else Icons.PLAY)
+        self.play_btn.set_icon(Icons.PAUSE if playing_this else Icons.PLAY)
 
     def show_empty_state(self):
+        self.current_track_id = None
         self.stack.setCurrentIndex(self.idx_empty)
 
     def show_track_details(self, metadata: dict):
         if metadata.get("is_multi"):
-            self.multi_text.setText(metadata.get("title", "Varias pistas seleccionadas"))
+            self.multi_page.set_text(metadata.get("title", "Varias pistas seleccionadas"))
             self.stack.setCurrentIndex(self.idx_multi)
             return
 
         self.stack.setCurrentIndex(self.idx_track)
+        self.current_track_id = metadata.get("id")
 
         # Clear any previous compatibility list; the library flow repopulates it.
         self.set_compatibles([])
 
         # Header
         self.title_label.setText(metadata.get("title", "Desconocido"))
+        self._playback_title = metadata.get("title", "")
+        artista = metadata.get("artist") or metadata.get("uploader") or ""
+        self._playback_subtitle = "" if artista == "—" else artista
         self.artist_label.setText(metadata.get("artist") or metadata.get("uploader", "Artista desconocido"))
 
         # A downloaded file plays straight from disk; anything else needs a
@@ -316,6 +305,10 @@ class ContextPanel(QWidget):
         # Musical
         self.row_remix.set_value(metadata.get("remix", "—"))
         self.row_genre.set_value(metadata.get("genre", "—"))
+        from ui.mappers.tag_labels import tag_label  # noqa: PLC0415
+        tags = metadata.get("tags") or {}
+        otras = [tag_label(ns, v) for ns in ("mood", "context", "status") for v in tags.get(ns, [])]
+        self.row_tags.set_value(", ".join(otras) if otras else "—")
         
         bpm = metadata.get("bpm")
         self.row_bpm.set_value(str(bpm) if bpm else "—")

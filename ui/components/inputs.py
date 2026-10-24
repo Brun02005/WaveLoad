@@ -1,24 +1,27 @@
 """
 ui/components/inputs.py
 =======================
-Reusable input components for WaveLoad 5.
+Reusable input components for WaveLoad.
 """
 
 from PySide6.QtWidgets import QLineEdit, QPlainTextEdit
 
+from ui.theme.colors import TEXT_MUTED
+from ui.theme.icons import Icons, icon
+
 
 class WLSearchInput(QLineEdit):
     """
-    Search bar with icon placeholder.
+    Search bar with a leading search icon.
     Used in the top toolbar.
     """
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, placeholder: str = "Buscar en la librería"):
         super().__init__(parent)
         self.setObjectName("wl_searchInput")
-        self.setPlaceholderText(" Buscar...")
-        self.setFixedHeight(36)
-        # Note: A proper search icon inside the QLineEdit usually requires
-        # a QAction or custom painting. The placeholder text emoji is a start.
+        self.setPlaceholderText(placeholder)
+        self.setFixedHeight(34)
+        self.setClearButtonEnabled(True)
+        self.addAction(icon(Icons.SEARCH, TEXT_MUTED, 16), QLineEdit.LeadingPosition)
 
 
 class WLTextArea(QPlainTextEdit):

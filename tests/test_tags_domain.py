@@ -18,6 +18,11 @@ from domain.tags import (
 
 
 class TestNormalizeValue:
+    def test_accents_are_dropped_not_the_letters(self):
+        assert normalize_value("Reggaetón") == "reggaeton"
+        assert normalize_value("Música Electrónica") == "musica-electronica"
+        assert normalize_value("Ñandú") == "nandu"
+
     def test_lowercases_and_slugifies(self):
         assert normalize_value("Peak Time") == "peak-time"
 

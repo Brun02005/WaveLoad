@@ -12,6 +12,9 @@ from core.config import MAX_CONCURRENT_DOWNLOADS
 
 logger = logging.getLogger(__name__)
 
+VALID_BITRATES = {"320", "256", "192", "128"}
+
+
 class SchedulerSignals(QObject):
     item_updated = Signal(str) # item_id
     batch_finished = Signal()
@@ -41,6 +44,16 @@ class Scheduler(QObject):
         self._timer.timeout.connect(self._tick)
         
         self.stalled_timeout = 300 # 5 minutes
+
+        # Opciones de la tanda en curso, elegidas en Ajustes. Antes la UI las
+        # mandaba y nadie las usaba: el MP3 salía siempre a 320k y las cookies
+        # se probaban aunque el usuario las hubiera apagado.
+        self.audio_quality = "320"
+        self.use_browser_auth = True
+
+    def configure(self, audio_quality: str = "320", use_browser_auth: bool = True):
+        self.audio_quality = audio_quality if str(audio_quality) in VALID_BITRATES else "320"
+        self.use_browser_auth = bool(use_browser_auth)
 
     def start(self):
         if not self._is_running:
@@ -125,7 +138,7 @@ class Scheduler(QObject):
         
         self._active_downloads.add(item.id)
         
-        worker = DownloadWorker(item)
+        worker = DownloadWorker(item, use_cookies=self.use_browser_auth)
         worker.signals.progress.connect(self._on_progress)
         worker.signals.finished.connect(self._on_download_finished)
         worker.signals.failed.connect(self._on_download_failed)
@@ -158,7 +171,7 @@ class Scheduler(QObject):
         self.signals.item_updated.emit(item_id)
         
         # Start PostProcessing
-        pp_worker = PostProcessWorker(item, temp_path)
+        pp_worker = PostProcessWorker(item, temp_path, bitrate=self.audio_quality)
         pp_worker.signals.progress.connect(self._on_progress)
         pp_worker.signals.finished.connect(self._on_postprocess_finished)
         pp_worker.signals.failed.connect(self._on_postprocess_failed)

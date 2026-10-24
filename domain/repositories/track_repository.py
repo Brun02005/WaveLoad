@@ -50,6 +50,22 @@ class TrackRepository(ABC):
         pass
 
     @abstractmethod
+    def delete_many(self, track_ids: List[str]) -> int:
+        """
+        Deletes several tracks (and everything that hangs from them) in a
+        single transaction. Returns how many were deleted.
+        """
+        pass
+
+    @abstractmethod
+    def update_audio_path(self, track_id: str, new_path: str) -> bool:
+        """
+        Points a track's audio asset at a new location (the file was moved).
+        Raises ValueError if that path already belongs to another track.
+        """
+        pass
+
+    @abstractmethod
     def exists_by_path(self, file_path: str) -> bool:
         """
         Checks if a track asset with the given file path already exists.

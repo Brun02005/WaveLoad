@@ -52,3 +52,71 @@ def test_url_falls_back_to_original_when_metadata_has_none(monkeypatch, tmp_path
     assert len(items) == 1
     assert items[0].id == SPOTIFY_URL
     assert items[0].url == SPOTIFY_URL
+
+
+# --- Enlaces que fallan al validarse -------------------------------------------
+# Antes la tarjeta se pintaba de rojo pero no contaba como fallida: el resumen
+# decía "0 fallidas", el progreso no llegaba al total y, si fallaban todos, la
+# tanda no terminaba nunca.
+
+import pytest  # noqa: E402
+
+from core.download_manager import DownloadManager  # noqa: E402
+from storage.session_store import SessionStore  # noqa: E402
+
+
+@pytest.fixture
+def manager(monkeypatch, tmp_path):
+    real_init = SessionStore.__init__
+    monkeypatch.setattr(
+        SessionStore, "__init__",
+        lambda self, db_file=None: real_init(self, tmp_path / "session.db"),
+    )
+    monkeypatch.setattr("core.download_manager.cookie_service.cleanup_session", lambda: None)
+    m = DownloadManager()
+    m._total_batch = 3
+    events = {"finished": [], "progress": [], "batch_finished": 0}
+    m.item_finished.connect(lambda i, s, n: events["finished"].append((i, s, n)))
+    m.batch_progress.connect(lambda c, t: events["progress"].append((c, t)))
+    m.batch_finished.connect(lambda: events.__setitem__("batch_finished", events["batch_finished"] + 1))
+    return m, events
+
+
+def test_a_link_that_fails_validation_counts_as_failed(manager):
+    m, events = manager
+    m._on_item_validated(
+        0, "—", "error",
+        "\x1b[0;31mERROR:\x1b[0m [youtube] qruvRVkz_WQ: It was removed following a copyright removal request",
+    )
+    assert events["finished"] == [(0, "error", "Eliminado de YouTube por un reclamo de copyright.")]
+    assert events["progress"] == [(1, 3)]
+
+
+def test_a_duplicate_is_finished_but_not_as_an_error(manager):
+    m, events = manager
+    m._on_item_validated(1, "Tema", "duplicado", "Ya existe en la carpeta.")
+    assert events["finished"] == [(1, "duplicado", "Ya existe en la carpeta.")]
+
+
+def test_a_valid_link_is_not_finished_yet(manager):
+    m, events = manager
+    m._on_item_validated(2, "Tema", "valido", "Listo para descargar.")
+    assert events["finished"] == [] and events["progress"] == []
+
+
+def test_a_batch_where_nothing_is_downloadable_ends(manager):
+    m, events = manager
+    m._on_batch_validated([])
+    assert events["batch_finished"] == 1
+
+
+def test_the_worker_emits_global_indices(monkeypatch, tmp_path):
+    def falla(cls, url):
+        raise RuntimeError("This video is not available")
+    monkeypatch.setattr(MetadataService, "extract_metadata", classmethod(falla))
+    monkeypatch.setattr("core.download_manager.cookie_service.initialize_session", lambda url: None)
+    worker = BatchValidationWorker(["https://youtu.be/a", "https://youtu.be/b"], Path(tmp_path), start_index=5)
+    indices = []
+    worker.signals.item_validated.connect(lambda i, *_: indices.append(i))
+    worker.run()
+    assert indices == [5, 6]

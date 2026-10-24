@@ -2,10 +2,11 @@ import re
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QProgressBar
 from PySide6.QtCore import Qt, Signal
 from ui.theme.colors import (
-    SURFACE_BASE, SURFACE_3, SURFACE_4, BORDER_DEFAULT, BORDER_STRONG,
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, PRIMARY_GREEN, PRIMARY_RED
+    SURFACE_3, SURFACE_4, BORDER_SUBTLE, BORDER_DEFAULT,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, ACCENT, PRIMARY_RED, STATUS_VALID,
 )
-from ui.theme.icons import Icons
+from ui.theme.icons import Icons, pixmap
+from ui.theme.typography import tabular
 from ui.components.buttons import WLIconButton
 
 
@@ -28,18 +29,19 @@ class DownloadCard(QWidget):
         self.play_btn.setEnabled(bool(source))
 
     def set_playing(self, is_playing: bool):
-        self.play_btn.setText(Icons.PAUSE if is_playing else Icons.PLAY)
+        self.play_btn.set_icon(Icons.PAUSE if is_playing else Icons.PLAY)
 
     def _build_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(14, 12, 10, 12)
         layout.setSpacing(12)
 
         # Icono de estado
-        self.icon_label = QLabel("🕒")
+        self.icon_label = QLabel()
         self.icon_label.setAlignment(Qt.AlignCenter)
         self.icon_label.setObjectName("statusIcon")
-        self.icon_label.setFixedWidth(24)
+        self.icon_label.setFixedSize(32, 32)
+        self._set_state_icon(Icons.PENDING, TEXT_MUTED)
 
         # Contenido principal
         info_layout = QVBoxLayout()
@@ -58,7 +60,8 @@ class DownloadCard(QWidget):
         self.percent_label = QLabel("0%")
         self.percent_label.setObjectName("percentLabel")
         self.percent_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.percent_label.setFixedWidth(50)
+        self.percent_label.setFixedWidth(56)
+        self.percent_label.setFont(tabular(self.percent_label.font()))
 
         top_row.addWidget(self.title_label, 1)
         top_row.addWidget(self.percent_label)
@@ -72,7 +75,7 @@ class DownloadCard(QWidget):
 
         # Fila inferior: Estado, Velocidad y ETA
         bottom_row = QHBoxLayout()
-        self.status_label = QLabel("Pendiente...")
+        self.status_label = QLabel("En cola")
         self.status_label.setObjectName("statusLabel")
 
         self.speed_label = QLabel("")
@@ -82,6 +85,8 @@ class DownloadCard(QWidget):
         self.eta_label = QLabel("")
         self.eta_label.setObjectName("etaLabel")
         self.eta_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        for etiqueta in (self.speed_label, self.eta_label):
+            etiqueta.setFont(tabular(etiqueta.font()))
 
         bottom_row.addWidget(self.status_label)
         bottom_row.addStretch()
@@ -92,7 +97,7 @@ class DownloadCard(QWidget):
         info_layout.addWidget(self.progress_bar)
         info_layout.addLayout(bottom_row)
 
-        self.play_btn = WLIconButton(Icons.PLAY)
+        self.play_btn = WLIconButton(Icons.PLAY, icon_px=14)
         self.play_btn.setEnabled(False)
         self.play_btn.setToolTip("Escuchar antes de descargar")
         self.play_btn.clicked.connect(lambda: self.play_toggle_requested.emit(self.index))
@@ -104,51 +109,52 @@ class DownloadCard(QWidget):
     def _apply_styles(self):
         # El estilo principal del Card en modo oscuro (Spotify/Discord-inspired)
         self.setObjectName("downloadCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             QWidget#downloadCard {{
                 background-color: {SURFACE_3};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: 4px;
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 10px;
             }}
             QWidget#downloadCard:hover {{
-                background-color: {SURFACE_4};
-                border-color: {BORDER_STRONG};
+                border-color: {BORDER_DEFAULT};
             }}
             QLabel#titleLabel {{
                 color: {TEXT_PRIMARY};
-                font-weight: 600;
+                font-weight: 500;
                 font-size: 13px;
-                text-transform: uppercase;
             }}
             QLabel#percentLabel {{
-                color: {PRIMARY_GREEN};
-                font-weight: 800;
+                color: {TEXT_SECONDARY};
+                font-weight: 600;
                 font-size: 12px;
             }}
             QProgressBar {{
-                background-color: {SURFACE_BASE};
+                background-color: {SURFACE_4};
                 border: none;
                 border-radius: 2px;
             }}
             QProgressBar::chunk {{
-                background-color: {PRIMARY_GREEN};
+                background-color: {ACCENT};
                 border-radius: 2px;
             }}
             QLabel#statusLabel {{
-                color: {TEXT_SECONDARY};
-                font-size: 11px;
-                text-transform: uppercase;
-                font-weight: 600;
+                color: {TEXT_MUTED};
+                font-size: 12px;
             }}
             QLabel#speedLabel, QLabel#etaLabel {{
-                color: {TEXT_SECONDARY};
-                font-size: 11px;
-                font-family: Consolas, monospace;
+                color: {TEXT_MUTED};
+                font-size: 12px;
+                padding-left: 10px;
             }}
             QLabel#statusIcon {{
-                font-size: 16px;
+                background-color: {SURFACE_4};
+                border-radius: 8px;
             }}
         """)
+
+    def _set_state_icon(self, name: str, color: str):
+        self.icon_label.setPixmap(pixmap(name, 16, color))
 
     def set_title(self, title: str):
         self.title = title
@@ -166,14 +172,14 @@ class DownloadCard(QWidget):
         - "Descargando..."
         """
         self.status = "downloading"
-        self.status_label.setText("DESCARGANDO...")
-        self.icon_label.setText("📥")
-        self.icon_label.setStyleSheet(f"color: {PRIMARY_GREEN};") # Neón
+        self.status_label.setText("Descargando")
+        self._set_state_icon(Icons.DOWNLOADING, ACCENT)
 
         if "Convirtiendo" in text:
-            self.status_label.setText("CONVIRTIENDO A MP3...")
+            self.status_label.setText("Convirtiendo a MP3")
+            self._set_state_icon(Icons.CONVERTING, ACCENT)
             self.progress_bar.setRange(0, 0) # Efecto pulso / indefinido
-            self.percent_label.setText("CONV.")
+            self.percent_label.setText("")
             self.speed_label.setText("")
             self.eta_label.setText("")
             # Cambiar color a blanco/gris para la conversión
@@ -187,20 +193,20 @@ class DownloadCard(QWidget):
         # Parsear porcentaje, velocidad y ETA
         # Ejemplo: "45.2% | 1.2MiB/s | ETA 00:15"
         self.progress_bar.setRange(0, 100)
-        
+
         # Extraer porcentaje
         pct_match = re.search(r"(\d+(?:\.\d+)?)%", text)
         if pct_match:
             pct_val = float(pct_match.group(1))
             self.progress_bar.setValue(int(pct_val))
             self.percent_label.setText(f"{int(pct_val)}%")
-        
+
         # Extraer velocidad y ETA si están separados por "|"
         parts = [p.strip() for p in text.split("|")]
         if len(parts) >= 2:
             # Si el primero es porcentaje, el segundo es velocidad
             speed_text = parts[1]
-            self.speed_label.setText(f"⚡ {speed_text}")
+            self.speed_label.setText(speed_text)
         else:
             self.speed_label.setText("")
 
@@ -208,7 +214,7 @@ class DownloadCard(QWidget):
             eta_text = parts[2]
             # Quitar prefijo "ETA " si ya lo tiene para no duplicar
             eta_clean = eta_text.replace("ETA ", "").strip()
-            self.eta_label.setText(f"⏳ {eta_clean}")
+            self.eta_label.setText(f"quedan {eta_clean}")
         else:
             self.eta_label.setText("")
 
@@ -225,24 +231,37 @@ class DownloadCard(QWidget):
             self.status = "completed"
             self.progress_bar.setValue(100)
             self.percent_label.setText("100%")
-            self.status_label.setText("COMPLETADO")
-            self.status_label.setStyleSheet(f"color: {PRIMARY_GREEN};")
-            self.icon_label.setText("✅")
+            self.status_label.setText("Listo")
+            self.status_label.setStyleSheet(f"color: {STATUS_VALID};")
+            self._set_state_icon(Icons.COMPLETED, STATUS_VALID)
             self.progress_bar.setStyleSheet(f"""
                 QProgressBar::chunk {{
-                    background-color: {PRIMARY_GREEN};
+                    background-color: {STATUS_VALID};
                 }}
             """)
             if detail:
                 self.title_label.setText(detail)
                 self.title_label.setToolTip(detail)
+        elif status == "duplicado":
+            # No es un fallo: el tema ya estaba en la carpeta y no se bajó de nuevo.
+            self.status = "skipped"
+            self.progress_bar.setValue(100)
+            self.percent_label.setText("")
+            self.status_label.setText("Ya estaba en tu carpeta")
+            self.status_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+            self._set_state_icon(Icons.CHECK, TEXT_SECONDARY)
+            self.progress_bar.setStyleSheet(f"""
+                QProgressBar::chunk {{
+                    background-color: {TEXT_MUTED};
+                }}
+            """)
         elif status == "cancelado":
             self.status = "cancelled"
             self.progress_bar.setValue(0)
-            self.percent_label.setText("CANCEL.")
-            self.status_label.setText("CANCELADO")
+            self.percent_label.setText("")
+            self.status_label.setText("Cancelado")
             self.status_label.setStyleSheet(f"color: {TEXT_MUTED};")
-            self.icon_label.setText("⛔")
+            self._set_state_icon(Icons.CANCELLED, TEXT_MUTED)
             self.progress_bar.setStyleSheet(f"""
                 QProgressBar::chunk {{
                     background-color: {TEXT_MUTED};
@@ -251,10 +270,11 @@ class DownloadCard(QWidget):
         else: # error o warning
             self.status = "failed"
             self.progress_bar.setValue(0)
-            self.percent_label.setText("FALLO")
-            self.status_label.setText(f"ERROR: {detail}")
+            self.percent_label.setText("")
+            self.status_label.setText(detail or "Falló")
+            self.status_label.setToolTip(detail)
             self.status_label.setStyleSheet(f"color: {PRIMARY_RED};")
-            self.icon_label.setText("❌")
+            self._set_state_icon(Icons.FAILED, PRIMARY_RED)
             self.progress_bar.setStyleSheet(f"""
                 QProgressBar::chunk {{
                     background-color: {PRIMARY_RED};

@@ -148,6 +148,28 @@ class TestStackEditing:
         movida = service.move_layer(collection, 1, 0)
         assert movida.ordered_layers()[0].mode is LayerMode.EXCLUDE
 
+    def test_replace_layer_keeps_position_and_enabled(self, service):
+        # Editar una capa apagada la volvía a prender: se reconstruía con
+        # enabled=True por defecto.
+        collection = service.create("X")
+        collection = service.add_layer(collection, tag("bpm", "120-129"))
+        collection = service.add_layer(collection, range_("bpm", 125, 131))
+        collection = service.toggle_layer(collection, 0, False)
+
+        editada = service.replace_layer(
+            collection, 0, range_("bpm", 100, 200), LayerMode.EXCLUDE
+        )
+        capa = editada.ordered_layers()[0]
+        assert capa.predicate == range_("bpm", 100, 200)
+        assert capa.mode is LayerMode.EXCLUDE
+        assert capa.enabled is False
+        assert editada.ordered_layers()[1].predicate == range_("bpm", 125, 131)
+
+    def test_replace_layer_on_a_missing_position_raises(self, service):
+        with pytest.raises(ValueError, match="posición 3"):
+            service.replace_layer(service.create("X"), 3, tag("bpm", "120-129"),
+                                  LayerMode.FILTER)
+
     def test_set_sort_and_limit(self, service):
         collection = service.create("X")
         collection = service.set_sort(collection, SortSpec("bpm", SortDirection.DESC))
@@ -198,6 +220,22 @@ class TestPaging:
         )
         pagina = service.page(collection, page_size=10)
         assert pagina.total == 4
+
+    def test_a_saved_limit_caps_the_page_too(self, service):
+        # Pedir la página con limit=page_size pisaba el límite guardado: con
+        # límite 4 venían los 10 tracks y la UI mostraba "1–10 de 4".
+        collection = service.set_limit(
+            service.set_sort(service.create("X"), SortSpec("bpm")), 4
+        )
+        assert len(service.page(collection, page_size=10)) == 4
+
+    def test_the_last_page_stops_at_the_saved_limit(self, service):
+        collection = service.set_limit(
+            service.set_sort(service.create("X"), SortSpec("bpm")), 7
+        )
+        segunda = service.page(collection, offset=5, page_size=5)
+        assert len(segunda) == 2 and not segunda.has_more
+        assert len(service.page(collection, offset=10, page_size=5)) == 0
 
     def test_the_default_page_size_is_the_documented_one(self, service):
         assert service.page(service.create("X")).page_size == DEFAULT_PAGE_SIZE
@@ -360,3 +398,56 @@ class TestTagRepositoryVocabulary:
             service.tags.get_or_create_tag_id(Tag("genre", "huerfano"), conn)
             conn.commit()
         assert service.tags.usage_by_namespace("genre") == [("huerfano", 0)]
+
+
+class TestCrateManagement:
+    """Crear, renombrar, duplicar, borrar y editar crates desde la UI."""
+
+    def _ids(self, service, n):
+        return [t.id for t in service.tracks.get_all()][:n]
+
+    def test_create_an_empty_crate_with_a_free_name(self, service):
+        a = service.create_crate()
+        b = service.create_crate()
+        assert (a.name, b.name) == ("Nuevo crate", "Nuevo crate 2")
+        assert len(a) == 0
+
+    def test_create_a_crate_with_tracks(self, service):
+        ids = [str(i) for i in self._ids(service, 3)]
+        crate = service.create_crate("Viernes", ids + ids[:1])  # repetidos no
+        assert crate.name == "Viernes" and list(crate.track_ids) == ids
+
+    def test_rename(self, service):
+        crate = service.create_crate("A")
+        assert service.rename_crate(crate.id, "  Cierre  ").name == "Cierre"
+
+    def test_rename_to_an_existing_name_is_rejected(self, service):
+        service.create_crate("Ocupado")
+        crate = service.create_crate("Libre")
+        with pytest.raises(ValueError, match="Ya hay un crate"):
+            service.rename_crate(crate.id, "Ocupado")
+
+    def test_duplicate_keeps_the_tracks(self, service):
+        ids = [str(i) for i in self._ids(service, 2)]
+        copia = service.duplicate_crate(service.create_crate("Base", ids).id)
+        assert copia.name == "Base (copia)" and list(copia.track_ids) == ids
+
+    def test_delete_leaves_the_tracks_in_the_library(self, service):
+        ids = [str(i) for i in self._ids(service, 2)]
+        crate = service.create_crate("Chau", ids)
+        antes = len(service.tracks.get_all())
+        assert service.delete_crate(crate.id)
+        assert service.list_crates() == [] and len(service.tracks.get_all()) == antes
+
+    def test_add_appends_without_repeating(self, service):
+        a, b, c = [str(i) for i in self._ids(service, 3)]
+        crate = service.create_crate("X", [a])
+        crate, agregadas = service.add_to_crate(crate.id, [b, a, c])
+        assert agregadas == 2 and list(crate.track_ids) == [a, b, c]
+
+    def test_remove_only_from_the_crate(self, service):
+        a, b, c = [str(i) for i in self._ids(service, 3)]
+        crate = service.create_crate("X", [a, b, c])
+        crate, quitadas = service.remove_from_crate(crate.id, [b, "no-esta"])
+        assert quitadas == 1 and list(crate.track_ids) == [a, c]
+        assert len(service.tracks.get_all()) == 12

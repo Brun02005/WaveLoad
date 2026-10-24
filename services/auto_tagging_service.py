@@ -72,6 +72,29 @@ class AutoTaggingService:
                 "Tags heredados de %s: +%d / -%d", track_id, agregados, quitados
             )
 
+        self._apply_file_genres(track_id, track)
+
+    def _apply_file_genres(self, track_id: str, track) -> None:
+        """Si el archivo trae género (Beatport, Bandcamp, una tienda), se toma.
+        Nunca pisa uno que ya tenga: ver ``TaggingService.apply_file_genres``."""
+        aplicar = getattr(self.tagging, "apply_file_genres", None)
+        if aplicar is None:
+            return
+        path = next(
+            (a.file_path for a in getattr(track, "assets", [])
+             if a.asset_type.name.startswith("AUDIO")),
+            None,
+        )
+        if path is None:
+            return
+        try:
+            agregados = aplicar(track_id, path)
+        except Exception as exc:
+            logger.error("No se pudo leer el género del archivo de %s: %s", track_id, exc)
+            return
+        if agregados:
+            logger.info("Género del archivo aplicado a %s", track_id)
+
     def handle_track_analyzed(self, event: TrackAnalyzedEvent) -> None:
         """Un track recién analizado recalcula sus tags derivados.
 

@@ -1,3 +1,4 @@
+import sqlite3
 import uuid
 import logging
 from typing import Optional, List
@@ -175,6 +176,42 @@ class SqliteTrackRepository(TrackRepository):
         except Exception as e:
             logger.error(f"Failed to delete Track {track_id}: {e}")
             return False
+
+    def delete_many(self, track_ids: List[str]) -> int:
+        """Borra varios tracks en una sola transacción. Devuelve cuántos borró.
+
+        Assets, análisis, tags, embeddings y entradas de crates se van en
+        cascada (``ON DELETE CASCADE`` con ``foreign_keys = ON``). Un error
+        revierte todo: o se quitan todos, o ninguno.
+        """
+        if not track_ids:
+            return 0
+        with self.db.get_connection() as conn:
+            borrados = 0
+            # De a 500: SQLite limita la cantidad de parámetros por sentencia.
+            for i in range(0, len(track_ids), 500):
+                lote = track_ids[i:i + 500]
+                marcas = ",".join("?" * len(lote))
+                cursor = conn.execute(f"DELETE FROM tracks WHERE id IN ({marcas})", lote)
+                borrados += cursor.rowcount
+            return borrados
+
+    def update_audio_path(self, track_id: str, new_path: str) -> bool:
+        """Apunta el asset de audio de un track a otra ruta (archivo movido).
+
+        Levanta ``ValueError`` si esa ruta ya pertenece a otro track: la
+        columna es UNIQUE y dos tracks no pueden ser el mismo archivo.
+        """
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.execute(
+                    "UPDATE track_assets SET file_path = ?, updated_at = ?"
+                    " WHERE track_id = ? AND asset_type LIKE 'AUDIO%'",
+                    (new_path, datetime.now(timezone.utc).isoformat(), track_id),
+                )
+                return cursor.rowcount > 0
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Ese archivo ya está en la librería como otra pista") from exc
 
     def exists_by_path(self, file_path: str) -> bool:
         """Checks if a track asset with the given file path already exists."""

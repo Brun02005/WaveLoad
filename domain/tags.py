@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 import re
+import unicodedata
 
 
 class TagSource(str, Enum):
@@ -88,7 +89,11 @@ def normalize_value(value: str) -> str:
     ``"Peak Time"`` -> ``"peak-time"``; ``"Drum & Bass"`` -> ``"drum-bass"``.
     Levanta ``ValueError`` si no queda nada después de normalizar.
     """
-    slug = _SLUG_STRIP.sub("-", value.strip().lower()).strip("-")
+    # Sin acentos antes de slugificar: "Reggaetón" -> "reggaeton", no
+    # "reggaet-n". Con géneros en castellano (cumbia, reggaetón, electrónica)
+    # descartar la letra acentuada partía la palabra.
+    sin_acentos = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    slug = _SLUG_STRIP.sub("-", sin_acentos.strip().lower()).strip("-")
     if not slug:
         raise ValueError(f"El valor de tag {value!r} queda vacío al normalizar")
     return slug

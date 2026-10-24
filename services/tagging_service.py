@@ -15,11 +15,13 @@ Dos garantías que valen para todo lo de acá:
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 from domain.tags import (
+    MANUAL_NAMESPACES,
     NS_BPM,
     NS_ENERGY,
+    NS_GENRE,
     NS_KEY,
     NS_PLAYLIST,
     NS_SOURCE,
@@ -154,6 +156,84 @@ def inherited_tags(
     return tuple(tags)
 
 
+# --- Género leído del archivo ------------------------------------------------
+# El campo Genre (TCON en ID3) lo completa quien vende o edita el archivo, y
+# cada uno lo escribe distinto: "Techno (Peak Time / Driving)" en Beatport,
+# "Electronica/Dance", "Drum n Bass", "(17)" en ID3v1. Esto lo lleva al mismo
+# vocabulario de slugs que usa el resto del motor.
+
+# Variantes frecuentes -> el slug canónico.
+_GENRE_SYNONYMS = {
+    "drum-and-bass": "drum-bass",
+    "drum-n-bass": "drum-bass",
+    "drum-bass": "drum-bass",
+    "dnb": "drum-bass",
+    "d-b": "drum-bass",
+    "hiphop": "hip-hop",
+    "hip-hop-rap": "hip-hop",
+    "rap-hip-hop": "hip-hop",
+    "techhouse": "tech-house",
+    "afrohouse": "afro-house",
+    "deephouse": "deep-house",
+    "electronica": "electronic",
+    "electronic-dance": "electronic",
+    "dance-electronic": "electronic",
+    "r-b": "r-b",
+    "rnb": "r-b",
+    "reggaetón": "reggaeton",
+    "regueton": "reggaeton",
+}
+
+# Lo que no dice nada sobre el tema.
+_GENRE_JUNK = {"other", "unknown", "misc", "none", "genre", "various", "default", "music"}
+
+# Más de tres géneros en un archivo casi siempre es ruido de la tienda.
+MAX_FILE_GENRES = 3
+
+
+def genres_from_file_values(values: Iterable[str]) -> list[str]:
+    """Los valores crudos del campo Genre -> slugs de ``genre``, sin repetir.
+
+    - Lo que va entre paréntesis es el subgénero de Beatport ("Peak Time /
+      Driving") o un código ID3v1 ("(17)"): se descarta, se queda el género.
+    - ``;``, ``/``, ``,`` y ``|`` separan géneros.
+    """
+    resultado: list[str] = []
+    for raw in values or ():
+        sin_parentesis = re.sub(r"\([^)]*\)", " ", str(raw))
+        for parte in re.split(r"[;/,|]", sin_parentesis):
+            parte = parte.strip()
+            if not parte:
+                continue
+            try:
+                slug = normalize_value(parte)
+            except ValueError:
+                continue
+            slug = _GENRE_SYNONYMS.get(slug, slug)
+            if slug in _GENRE_JUNK or slug.isdigit() or slug in resultado:
+                continue
+            resultado.append(slug)
+    return resultado[:MAX_FILE_GENRES]
+
+
+def read_file_genres(path) -> list[str]:
+    """El género que trae un archivo de audio (MP3, FLAC, M4A…), normalizado.
+
+    Lee con mutagen en modo "easy", que unifica los nombres de campo entre
+    formatos. Un archivo ilegible devuelve lista vacía: no tener género no es
+    un error.
+    """
+    try:
+        import mutagen  # noqa: PLC0415
+        audio = mutagen.File(str(path), easy=True)
+    except Exception as exc:  # noqa: BLE001 — archivo dañado, formato raro, permisos
+        logger.debug("No se pudo leer el género de %s: %s", path, exc)
+        return []
+    if audio is None or not audio.tags:
+        return []
+    return genres_from_file_values(audio.tags.get("genre") or [])
+
+
 @dataclass
 class BackfillReport:
     """Qué pasó en una corrida de recálculo masivo."""
@@ -219,6 +299,45 @@ class TaggingService:
             inherited_tags(source_platform, source_playlist_name),
             conn=conn,
         )
+
+    # --- etiquetado manual ---------------------------------------------------
+
+    def manual_tags(self, track_ids) -> dict:
+        """Los tags de los ejes que edita el usuario (género, mood, momento,
+        estado), por track, en una consulta."""
+        return self.repo.tags_for_tracks(track_ids, namespaces=sorted(MANUAL_NAMESPACES))
+
+    def edit_manual(self, track_ids, add=(), remove=()) -> tuple[int, int]:
+        """Agrega y quita tags manuales en varios tracks a la vez.
+
+        Sólo acepta namespaces manuales: bpm, clave y energía se recalculan del
+        análisis, y editarlos a mano sería pisarse con el próximo recálculo.
+        """
+        add, remove = list(add), list(remove)
+        for tag in (*add, *remove):
+            if tag.namespace not in MANUAL_NAMESPACES:
+                raise ValueError(f"'{tag.namespace}' no se edita a mano: se calcula solo")
+        return self.repo.edit_tags(list(track_ids), add=add, remove=remove,
+                                   source=TagSource.MANUAL)
+
+    def apply_file_genres(self, track_id: str, path) -> int:
+        """Si el track todavía no tiene género, toma el que trae el archivo.
+
+        Se guarda como ``manual``, igual que los tags que se leen del archivo al
+        importar (ARQUITECTURA §4.7): desde ese momento son del usuario, que los
+        corrige o borra, y nada automático los vuelve a escribir. Por eso sólo se
+        aplica si no hay género manual: nunca pisa lo que el usuario eligió.
+        """
+        actuales = self.repo.tags_for_tracks([track_id], namespaces=[NS_GENRE])
+        if actuales.get(str(track_id)):
+            return 0
+        generos = read_file_genres(path)
+        if not generos:
+            return 0
+        agregados, _ = self.repo.edit_tags(
+            [str(track_id)], add=[Tag(NS_GENRE, g) for g in generos], source=TagSource.MANUAL
+        )
+        return agregados
 
     # --- masivo -----------------------------------------------------------
 

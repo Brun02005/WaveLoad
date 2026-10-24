@@ -33,6 +33,9 @@ _ffprobe = _find_binary("ffprobe")
 datas = [
     ('ui/waveload_icon.png', 'ui'),
     ('waveload_icon.ico', '.'),
+    # Inter (SIL OFL): la interfaz se diseñó con ella; sin el archivo cae a
+    # Segoe UI y cambian todas las medidas. La licencia viaja con la fuente.
+    ('ui/assets/fonts', 'ui/assets/fonts'),
 ]
 binaries = [(_ffmpeg, '.'), (_ffprobe, '.')]
 hiddenimports = [
@@ -40,6 +43,9 @@ hiddenimports = [
     'PIL', 'PIL.Image', 'PIL.JpegImagePlugin',
     'aiohttp', 'aiohttp.streams',
     'browser_cookie3',
+    # Los iconos son SVG: QtSvg para pintarlos y el plugin de imagen para los
+    # que usa la hoja de estilos (flecha del combo, tilde del checkbox).
+    'PySide6.QtSvg',
 ]
 
 # Only full-collect what PyInstaller can't trace on its own. scipy / numpy have
@@ -47,7 +53,7 @@ hiddenimports = [
 # heavy enough to OOM the analysis. sklearn is NOT needed (librosa only imports
 # it lazily in functions we don't call).
 for _pkg in ('librosa', 'soundfile', 'audioread', 'soxr', 'lazy_loader',
-             'pooch', 'joblib', 'msgpack'):
+             'pooch', 'joblib', 'msgpack', 'numba', 'llvmlite'):
     _d, _b, _h = collect_all(_pkg)
     datas += _d
     binaries += _b
@@ -56,8 +62,10 @@ for _pkg in ('librosa', 'soundfile', 'audioread', 'soxr', 'lazy_loader',
 hiddenimports += collect_submodules('networkx')
 # Heavy ML libs that happen to be installed but we never use — an optional
 # import was dragging multi-GB PyTorch into the build and OOM-ing PyInstaller.
+# numba/llvmlite NO van acá: librosa >= 0.10 los importa al cargarse, y
+# excluirlos dejaba al .exe sin poder analizar ni un track.
 excludes_extra = ['sklearn', 'torch', 'torchaudio', 'torchvision',
-                  'tensorflow', 'pandas', 'numba', 'llvmlite']
+                  'tensorflow', 'pandas']
 
 a = Analysis(
     ['main.py'],
@@ -84,7 +92,9 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # Sin UPX: comprimir las DLL de Qt dispara falsos positivos de antivirus
+    # y a veces las rompe. Se paga en tamaño, no en estabilidad.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

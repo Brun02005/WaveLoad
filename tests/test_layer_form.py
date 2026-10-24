@@ -135,6 +135,23 @@ class TestWhatDoesNotFit:
     def test_a_leaf_is_always_editable(self):
         assert LayerForm.is_editable(tag("genre", "techno"))
 
+    def test_an_open_range_is_not_editable(self):
+        # El diálogo tiene dos campos cerrados: abrir `bpm >= 120` lo mostraba
+        # como "entre 0 y 120" y guardarlo invertía la capa.
+        assert not LayerForm.is_editable(range_("bpm", 120, None))
+        assert not LayerForm.is_editable(range_("bpm", None, 128))
+        assert not LayerForm.is_editable(not_(range_("bpm", 120, None)))
+
+    def test_a_date_range_is_not_editable(self):
+        # El diálogo sólo ofrece campos numéricos para un rango.
+        assert not LayerForm.is_editable(
+            range_("created_at", "2026-01-01", "2026-12-31")
+        )
+
+    def test_a_closed_numeric_range_is_editable(self):
+        assert LayerForm.is_editable(range_("energy", 3, 7))
+        assert LayerForm.is_editable(not_(range_("bpm", 122, 128)))
+
     def test_what_does_not_fit_is_not_an_error(self):
         # Devuelve None, no levanta: la UI la muestra de sólo lectura en vez de
         # recortarla o romperse.

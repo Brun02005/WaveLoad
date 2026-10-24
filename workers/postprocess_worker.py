@@ -19,9 +19,10 @@ class PostProcessWorker(QRunnable):
     Worker for converting downloaded media to MP3 and embedding metadata.
     Runs ffmpeg directly.
     """
-    def __init__(self, item: DownloadItem, downloaded_file_path: str):
+    def __init__(self, item: DownloadItem, downloaded_file_path: str, bitrate: str = "320"):
         super().__init__()
         self.item = item
+        self.bitrate = bitrate
         self.downloaded_file_path = Path(downloaded_file_path)
         self.signals = PostProcessSignals()
         self._cancelled = False
@@ -88,8 +89,9 @@ class PostProcessWorker(QRunnable):
                 self.signals.failed.emit(self.item.id, msg)
 
     def _build_ffmpeg_cmd(self, final_mp3_path: Path) -> list:
+        from core.config import ffmpeg_executable
         cmd = [
-            "ffmpeg",
+            ffmpeg_executable(),
             "-hide_banner",      # skip the version/config banner noise in stderr
             "-loglevel", "error",  # so captured stderr is the actual error, not info
             "-y",                # overwrite
@@ -97,7 +99,7 @@ class PostProcessWorker(QRunnable):
             "-vn",               # no video
             "-ar", "44100",
             "-ac", "2",
-            "-b:a", "320k",
+            "-b:a", f"{self.bitrate}k",
         ]
         if self.item.title:
             cmd.extend(["-metadata", f"title={self.item.title}"])
@@ -116,17 +118,23 @@ class PostProcessWorker(QRunnable):
         a generic message, and verifies the output file was actually written.
         """
         last_error = ""
+        # Un archivo que ya estaba es del usuario: si ffmpeg falla, no se borra.
+        existed_before = final_mp3_path.exists()
         for attempt in range(1, attempts + 1):
             if self._cancelled:
                 raise Exception("Cancelado por el usuario")
 
             cmd = self._build_ffmpeg_cmd(final_mp3_path)
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-            )
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+            except FileNotFoundError:
+                # No tiene sentido reintentar: el binario no está.
+                raise Exception("FFmpeg no está instalado o no está en el PATH.")
             out, err = process.communicate()
             stderr_text = err.decode("utf-8", errors="replace").strip()
 
@@ -145,9 +153,10 @@ class PostProcessWorker(QRunnable):
             if not output_ok and process.returncode == 0:
                 last_error = "FFmpeg terminó sin generar el archivo MP3."
 
-            # Remove any partial/corrupt output before retrying.
+            # Remove any partial/corrupt output before retrying. Un MP3 a medias
+            # que queda en disco se marca como "duplicado" en la próxima tanda.
             try:
-                if final_mp3_path.exists() and final_mp3_path.stat().st_size == 0:
+                if final_mp3_path.exists() and not existed_before:
                     final_mp3_path.unlink()
             except Exception:
                 pass

@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QL
 from PySide6.QtCore import Qt, Signal
 
 from ui.theme.colors import SURFACE_2, SURFACE_4, BORDER_DEFAULT, BORDER_STRONG, TEXT_SECONDARY
+from ui.theme.icons import Icons, pixmap
 
 class CollapsibleDetails(QWidget):
     def __init__(self, title="Mostrar detalles técnicos", parent=None):
@@ -28,9 +29,10 @@ class CollapsibleDetails(QWidget):
         header_layout.setContentsMargins(10, 0, 10, 0)
         header_layout.setSpacing(6)
 
-        self.arrow_label = QLabel("▶")
+        self.arrow_label = QLabel()
+        self.arrow_label.setPixmap(pixmap(Icons.ARROW_RIGHT, 14, TEXT_SECONDARY))
         self.arrow_label.setObjectName("arrowLabel")
-        self.arrow_label.setFixedWidth(12)
+        self.arrow_label.setFixedWidth(14)
 
         self.text_label = QLabel(self.title_text)
         self.text_label.setObjectName("headerText")
@@ -83,10 +85,10 @@ class CollapsibleDetails(QWidget):
         self.content_widget.setVisible(self.expanded)
         
         if self.expanded:
-            self.arrow_label.setText("▼")
+            self.arrow_label.setPixmap(pixmap(Icons.ARROW_DOWN, 14, TEXT_SECONDARY))
             self.text_label.setText("Ocultar detalles técnicos")
         else:
-            self.arrow_label.setText("▶")
+            self.arrow_label.setPixmap(pixmap(Icons.ARROW_RIGHT, 14, TEXT_SECONDARY))
             self.text_label.setText(self.title_text)
             
         self.header_btn.setChecked(self.expanded)

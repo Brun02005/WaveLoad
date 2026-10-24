@@ -186,6 +186,79 @@ class SqliteTagRepository:
             for r in rows
         ]
 
+    def tags_for_tracks(
+        self,
+        track_ids: Sequence[str],
+        namespaces: Optional[Iterable[str]] = None,
+    ) -> dict[str, list[Tag]]:
+        """Los tags de varios tracks en una consulta, sin repetir los que llegan
+        por más de una fuente. Para llenar una tabla entera sin una consulta
+        por fila."""
+        resultado: dict[str, list[Tag]] = {str(t): [] for t in track_ids}
+        if not resultado:
+            return resultado
+        filtro_ns = ""
+        extra: list = []
+        if namespaces is not None:
+            ns = list(namespaces)
+            filtro_ns = f" AND t.namespace IN ({','.join('?' * len(ns))})"
+            extra = ns
+        ids = list(resultado)
+        with self.db.get_connection() as conn:
+            for i in range(0, len(ids), 500):
+                lote = ids[i:i + 500]
+                filas = conn.execute(
+                    "SELECT DISTINCT tt.track_id, t.id, t.namespace, t.value"
+                    " FROM track_tags tt JOIN tags t ON t.id = tt.tag_id"
+                    f" WHERE tt.track_id IN ({','.join('?' * len(lote))}){filtro_ns}"
+                    " ORDER BY t.namespace, t.value",
+                    [*lote, *extra],
+                ).fetchall()
+                for track_id, tag_id, namespace, value in filas:
+                    resultado[track_id].append(Tag(namespace=namespace, value=value, id=tag_id))
+        return resultado
+
+    def edit_tags(
+        self,
+        track_ids: Sequence[str],
+        add: Iterable[Tag] = (),
+        remove: Iterable[Tag] = (),
+        source: TagSource = TagSource.MANUAL,
+    ) -> tuple[int, int]:
+        """Agrega y quita tags de una fuente en varios tracks, en una sola
+        transacción. Devuelve (asignaciones agregadas, asignaciones quitadas).
+
+        Quitar sólo toca la fuente pedida: sacar el ``genre:techno`` que puso el
+        usuario no borra el que haya propuesto la IA.
+        """
+        add, remove = list(add), list(remove)
+        agregados = quitados = 0
+        ahora = _now()
+        with self.db.get_connection() as conn:
+            for tag in add:
+                tag_id = self.get_or_create_tag_id(tag, conn)
+                for track_id in track_ids:
+                    cur = conn.execute(
+                        "INSERT OR IGNORE INTO track_tags"
+                        " (track_id, tag_id, source, confidence, created_at) VALUES (?,?,?,?,?)",
+                        (str(track_id), tag_id, source.value, 1.0, ahora),
+                    )
+                    agregados += cur.rowcount
+            for tag in remove:
+                row = conn.execute(
+                    "SELECT id FROM tags WHERE namespace = ? AND value = ?",
+                    (tag.namespace, tag.value),
+                ).fetchone()
+                if row is None:
+                    continue
+                for track_id in track_ids:
+                    cur = conn.execute(
+                        "DELETE FROM track_tags WHERE track_id = ? AND tag_id = ? AND source = ?",
+                        (str(track_id), row[0], source.value),
+                    )
+                    quitados += cur.rowcount
+        return agregados, quitados
+
     def track_ids_with_tag(self, tag: Tag) -> list[str]:
         """Qué tracks tienen este tag, sin importar de qué fuente vino."""
         with self.db.get_connection() as conn:

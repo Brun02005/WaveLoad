@@ -22,6 +22,7 @@ waveload_cache.json
 
 # Logs y dumps
 *.log
+*.log.[0-9]*
 waveload_crash_dump.txt
 
 # Audio descargado
@@ -30,3 +31,11 @@ mp3_downloads/
 # Editor
 .vscode/
 .claude/settings.local.json
+
+# Notas internas y borradores (no se publican)
+PROMPT WAVELOAD.md
+RESUMEN WAVELOAD V3.md
+resumen_waveload_v3.txt
+limpieza_metadata_preview.txt
+PLAN_VERSION_FINAL.md
+.claude/

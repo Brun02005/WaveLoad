@@ -1,10 +1,33 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PySide6.QtCore import Qt, Signal
+
+from ui.components.buttons import WLGhostButton, WLPrimaryButton, WLSecondaryButton
 from ui.theme.colors import (
-    SURFACE_2, SURFACE_3, SURFACE_4, BORDER_DEFAULT,
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_INVERSE,
-    PRIMARY_GREEN, PRIMARY_GREEN_HOVER, PRIMARY_RED, STATUS_INFO
+    SURFACE_3, BORDER_SUBTLE, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
+    STATUS_VALID, PRIMARY_RED,
 )
+from ui.theme.icons import Icons, pixmap
+from ui.theme.typography import tabular
+
+
+class _Metric(QWidget):
+    """Un número grande con su etiqueta debajo."""
+
+    def __init__(self, label: str, color: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("metricBox")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(2)
+        self.value = QLabel("0")
+        self.value.setFont(tabular(self.value.font()))
+        self.value.setStyleSheet(f"color: {color}; font-size: 24px; font-weight: 600;")
+        caption = QLabel(label)
+        caption.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
+        layout.addWidget(self.value)
+        layout.addWidget(caption)
+
 
 class SummaryWidget(QWidget):
     close_requested = Signal()
@@ -12,183 +35,164 @@ class SummaryWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._build_ui()
-        self._apply_styles()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(16)
-        layout.setAlignment(Qt.AlignCenter)
-
-        # Encabezado
-        self.header_label = QLabel("🏁 Tanda Finalizada")
-        self.header_label.setObjectName("summaryHeader")
-        self.header_label.setAlignment(Qt.AlignCenter)
-
-        self.subtitle_label = QLabel("Se ha completado el procesamiento de los enlaces.")
-        self.subtitle_label.setObjectName("summarySubtitle")
-        self.subtitle_label.setAlignment(Qt.AlignCenter)
-
-        # Fila de métricas
-        metrics_layout = QHBoxLayout()
-        metrics_layout.setSpacing(24)
-        metrics_layout.setAlignment(Qt.AlignCenter)
-
-        # Éxitos
-        self.success_widget = QWidget()
-        self.success_widget.setObjectName("metricBox")
-        s_layout = QVBoxLayout(self.success_widget)
-        s_layout.setSpacing(4)
-        s_layout.setAlignment(Qt.AlignCenter)
-        self.success_icon = QLabel("✅")
-        self.success_icon.setStyleSheet("font-size: 20px;")
-        self.success_val = QLabel("0")
-        self.success_val.setObjectName("successValue")
-        self.success_lbl = QLabel("Éxito")
-        self.success_lbl.setObjectName("metricLabel")
-        s_layout.addWidget(self.success_icon)
-        s_layout.addWidget(self.success_val)
-        s_layout.addWidget(self.success_lbl)
-
-        # Fallidos
-        self.failed_widget = QWidget()
-        self.failed_widget.setObjectName("metricBox")
-        f_layout = QVBoxLayout(self.failed_widget)
-        f_layout.setSpacing(4)
-        f_layout.setAlignment(Qt.AlignCenter)
-        self.failed_icon = QLabel("❌")
-        self.failed_icon.setStyleSheet("font-size: 20px;")
-        self.failed_val = QLabel("0")
-        self.failed_val.setObjectName("failedValue")
-        self.failed_lbl = QLabel("Fallidos")
-        self.failed_lbl.setObjectName("metricLabel")
-        f_layout.addWidget(self.failed_icon)
-        f_layout.addWidget(self.failed_val)
-        f_layout.addWidget(self.failed_lbl)
-
-        # Tiempo
-        self.time_widget = QWidget()
-        self.time_widget.setObjectName("metricBox")
-        t_layout = QVBoxLayout(self.time_widget)
-        t_layout.setSpacing(4)
-        t_layout.setAlignment(Qt.AlignCenter)
-        self.time_icon = QLabel("⏱️")
-        self.time_icon.setStyleSheet("font-size: 20px;")
-        self.time_val = QLabel("0s")
-        self.time_val.setObjectName("timeValue")
-        self.time_lbl = QLabel("Duración")
-        self.time_lbl.setObjectName("metricLabel")
-        t_layout.addWidget(self.time_icon)
-        t_layout.addWidget(self.time_val)
-        t_layout.addWidget(self.time_lbl)
-
-        metrics_layout.addWidget(self.success_widget)
-        metrics_layout.addWidget(self.failed_widget)
-        metrics_layout.addWidget(self.time_widget)
-
-        # Botones de acción
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(12)
-        btn_layout.setAlignment(Qt.AlignCenter)
-
-        self.open_folder_btn = QPushButton("📁  Abrir Carpeta")
-        self.open_folder_btn.setObjectName("summaryOpenBtn")
-        self.open_folder_btn.setCursor(Qt.PointingHandCursor)
-        self.open_folder_btn.clicked.connect(self.open_folder_requested.emit)
-
-        self.new_batch_btn = QPushButton("Nueva Descarga")
-        self.new_batch_btn.setObjectName("summaryNewBtn")
-        self.new_batch_btn.setCursor(Qt.PointingHandCursor)
-        self.new_batch_btn.clicked.connect(self.close_requested.emit)
-
-        btn_layout.addWidget(self.open_folder_btn)
-        btn_layout.addWidget(self.new_batch_btn)
-
-        layout.addWidget(self.header_label)
-        layout.addWidget(self.subtitle_label)
-        layout.addLayout(metrics_layout)
-        layout.addLayout(btn_layout)
-
-    def _apply_styles(self):
         self.setObjectName("summaryCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self._build_ui()
         self.setStyleSheet(f"""
             QWidget#summaryCard {{
-                background-color: {SURFACE_2};
-                border: 2px solid {BORDER_DEFAULT};
-                border-radius: 12px;
+                background-color: transparent;
             }}
-            QLabel#summaryHeader {{
-                color: {TEXT_PRIMARY};
-                font-size: 20px;
-                font-weight: 700;
-            }}
-            QLabel#summarySubtitle {{
-                color: {TEXT_SECONDARY};
-                font-size: 13px;
+            QWidget#failuresBox {{
+                background-color: {SURFACE_3};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 10px;
             }}
             QWidget#metricBox {{
                 background-color: {SURFACE_3};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: 8px;
-                min-width: 90px;
-                min-height: 90px;
-            }}
-            QLabel#successValue {{
-                color: {PRIMARY_GREEN};
-                font-size: 20px;
-                font-weight: bold;
-            }}
-            QLabel#failedValue {{
-                color: {PRIMARY_RED};
-                font-size: 20px;
-                font-weight: bold;
-            }}
-            QLabel#timeValue {{
-                color: {STATUS_INFO};
-                font-size: 20px;
-                font-weight: bold;
-            }}
-            QLabel#metricLabel {{
-                color: {TEXT_MUTED};
-                font-size: 11px;
-                font-weight: 600;
-            }}
-            QPushButton#summaryOpenBtn {{
-                background-color: {SURFACE_3};
-                border: 1px solid {BORDER_DEFAULT};
-                color: {TEXT_PRIMARY};
-                border-radius: 8px;
-                padding: 10px 20px;
-                font-weight: 600;
-                font-size: 13px;
-            }}
-            QPushButton#summaryOpenBtn:hover {{
-                background-color: {SURFACE_4};
-            }}
-            QPushButton#summaryNewBtn {{
-                background-color: {PRIMARY_GREEN};
-                border: none;
-                color: {TEXT_INVERSE};
-                border-radius: 8px;
-                padding: 10px 24px;
-                font-weight: 600;
-                font-size: 13px;
-            }}
-            QPushButton#summaryNewBtn:hover {{
-                background-color: {PRIMARY_GREEN_HOVER};
+                border: 1px solid {BORDER_SUBTLE};
+                border-radius: 10px;
+                min-width: 120px;
             }}
         """)
 
-    def set_stats(self, success_count: int, failed_count: int, elapsed_seconds: float):
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignCenter)
+
+        badge = QLabel()
+        badge.setFixedSize(48, 48)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setPixmap(pixmap(Icons.BATCH_FINISHED, 22, TEXT_SECONDARY))
+        badge.setStyleSheet(f"background-color: {SURFACE_3}; border-radius: 12px;")
+
+        self.header_label = QLabel("Tanda terminada")
+        self.header_label.setAlignment(Qt.AlignCenter)
+        self.header_label.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 18px; font-weight: 600;")
+
+        self.subtitle_label = QLabel("Las pistas convertidas ya están en tu carpeta y en la librería.")
+        self.subtitle_label.setAlignment(Qt.AlignCenter)
+        self.subtitle_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+
+        metrics_layout = QHBoxLayout()
+        metrics_layout.setSpacing(12)
+        metrics_layout.setAlignment(Qt.AlignCenter)
+        self.success_widget = _Metric("descargadas", STATUS_VALID)
+        self.failed_widget = _Metric("fallidas", PRIMARY_RED)
+        self.skipped_widget = _Metric("ya estaban", TEXT_SECONDARY)
+        self.time_widget = _Metric("duración", TEXT_PRIMARY)
+        self.success_val = self.success_widget.value
+        self.failed_val = self.failed_widget.value
+        self.time_val = self.time_widget.value
+        for widget in (self.success_widget, self.failed_widget, self.skipped_widget,
+                       self.time_widget):
+            metrics_layout.addWidget(widget)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.setAlignment(Qt.AlignCenter)
+        self.open_folder_btn = WLSecondaryButton("Abrir carpeta", icon=Icons.OPEN_FOLDER)
+        self.open_folder_btn.setFixedHeight(36)
+        self.open_folder_btn.clicked.connect(self.open_folder_requested.emit)
+        self.new_batch_btn = WLPrimaryButton("Nueva descarga", height=36)
+        self.new_batch_btn.clicked.connect(self.close_requested.emit)
+        btn_layout.addWidget(self.open_folder_btn)
+        btn_layout.addWidget(self.new_batch_btn)
+
+        layout.addWidget(badge, 0, Qt.AlignHCenter)
+        layout.addSpacing(16)
+        layout.addWidget(self.header_label)
+        layout.addSpacing(4)
+        layout.addWidget(self.subtitle_label)
+        layout.addSpacing(24)
+        layout.addLayout(metrics_layout)
+        layout.addSpacing(24)
+        layout.addLayout(btn_layout)
+
+        # Qué falló y por qué. Sin esto el usuario veía "2 fallidas" sin saber
+        # cuáles ni si valía la pena reintentarlas.
+        self.failures_box = QWidget()
+        self.failures_box.setObjectName("failuresBox")
+        self.failures_box.setAttribute(Qt.WA_StyledBackground, True)
+        self.failures_box.setMaximumWidth(640)
+        fb = QVBoxLayout(self.failures_box)
+        fb.setContentsMargins(16, 12, 12, 12)
+        fb.setSpacing(6)
+        cabecera = QHBoxLayout()
+        self.failures_title = QLabel("No se pudieron descargar")
+        self.failures_title.setStyleSheet(f"color: {TEXT_PRIMARY}; font-weight: 600;")
+        cabecera.addWidget(self.failures_title)
+        cabecera.addStretch()
+        self.copy_failed_btn = WLGhostButton("Copiar enlaces", icon=Icons.DUPLICATE)
+        self.copy_failed_btn.setToolTip("Copia los enlaces que fallaron, para pegarlos y reintentar")
+        self.copy_failed_btn.clicked.connect(self._copy_failed_links)
+        cabecera.addWidget(self.copy_failed_btn)
+        fb.addLayout(cabecera)
+        self.failures_list = QVBoxLayout()
+        self.failures_list.setSpacing(4)
+        fb.addLayout(self.failures_list)
+        layout.addSpacing(20)
+        layout.addWidget(self.failures_box, 0, Qt.AlignHCenter)
+        self.failures_box.setVisible(False)
+        self._failed_links: list = []
+
+    def set_stats(self, success_count: int, failed_count: int, elapsed_seconds: float,
+                  skipped: int = 0, failures: list | None = None):
         self.success_val.setText(str(success_count))
         self.failed_val.setText(str(failed_count))
-        
-        # Formatear el tiempo de manera amigable
+        self.skipped_widget.value.setText(str(skipped))
+        self.skipped_widget.setVisible(skipped > 0)
+        self._show_failures(failures or [])
         if elapsed_seconds < 60:
-            time_str = f"{int(elapsed_seconds)}s"
+            time_str = f"{int(elapsed_seconds)} s"
         else:
             m = int(elapsed_seconds // 60)
             s = int(elapsed_seconds % 60)
-            time_str = f"{m}m {s}s"
+            time_str = f"{m} min {s} s"
         self.time_val.setText(time_str)
+
+    def _show_failures(self, failures: list):
+        """``failures``: (título, motivo, enlace) de cada pista que falló."""
+        while self.failures_list.count():
+            item = self.failures_list.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._failed_links = [url for _, _, url in failures if url]
+        self.copy_failed_btn.setText("Copiar enlaces")
+        self.failures_box.setVisible(bool(failures))
+        if not failures:
+            return
+        self.failures_title.setText(
+            "No se pudo descargar 1 pista" if len(failures) == 1
+            else f"No se pudieron descargar {len(failures)} pistas"
+        )
+        for titulo, motivo, _url in failures[:12]:
+            fila = QWidget()
+            h = QHBoxLayout(fila)
+            h.setContentsMargins(0, 2, 0, 2)
+            h.setSpacing(10)
+            marca = QLabel()
+            marca.setPixmap(pixmap(Icons.FAILED, 14, PRIMARY_RED))
+            nombre = QLabel()
+            nombre.setText(nombre.fontMetrics().elidedText(titulo, Qt.ElideRight, 260))
+            nombre.setToolTip(titulo)
+            nombre.setFixedWidth(260)
+            nombre.setStyleSheet(f"color: {TEXT_PRIMARY};")
+            razon = QLabel(motivo)
+            razon.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
+            razon.setWordWrap(True)
+            h.addWidget(marca)
+            h.addWidget(nombre)
+            h.addWidget(razon, 1)
+            self.failures_list.addWidget(fila)
+        if len(failures) > 12:
+            mas = QLabel(f"y {len(failures) - 12} más (están en el registro técnico)")
+            mas.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
+            self.failures_list.addWidget(mas)
+        self.copy_failed_btn.setVisible(bool(self._failed_links))
+
+    def _copy_failed_links(self):
+        from PySide6.QtGui import QGuiApplication  # noqa: PLC0415
+        QGuiApplication.clipboard().setText("\n".join(self._failed_links))
+        self.copy_failed_btn.setText("Copiados")

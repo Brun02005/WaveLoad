@@ -617,3 +617,127 @@ dibujo y nada más.
 **Siguiente:** el `CollectionsWorkspace`.
 
 **`ARQUITECTURA.md` no cambió en esta unidad.**
+
+### 2026-10-21 — unidad 11: estabilización (sprint A) y rediseño visual
+**Hecho:** auditoría completa en `PLAN_VERSION_FINAL.md`, y su sprint A:
+- **Build distribuible:** el `.exe` usa el ffmpeg empaquetado (`core.config.ffmpeg_executable`
+  + `_MEIPASS` al PATH), `numba`/`llvmlite` ya no se excluyen (librosa no carga sin
+  ellos), UPX apagado, Inter y QtSvg en el spec.
+- **Análisis:** el motor se chequea una vez; si no carga se avisa con un diálogo en vez de
+  fallar track por track. No se encola dos veces el mismo track; el progreso cuenta sólo
+  la corrida de librería.
+- **SQLite:** las conexiones se cierran al salir del `with`, modo WAL y `busy_timeout`.
+  `TrackCreatedEvent` llega a la UI por una señal Qt (antes tocaba widgets desde el pool).
+- **Colecciones (UI):** agregar/editar capa (`dialogo.Accepted` fallaba en PySide6 6.11),
+  redibujo tras Nueva/Duplicar/Renombrar, resultados viejos descartados por token, volver
+  de un crate, editar no prende una capa apagada (`CollectionService.replace_layer`), el
+  límite guardado acota la página, rangos abiertos y de fecha quedan de sólo lectura,
+  paginar no recalcula conteos, apagado ordenado de workers.
+- **Ajustes que no hacían nada:** la calidad del MP3 y las cookies ahora llegan a ffmpeg y
+  a yt-dlp. Un MP3 a medias se borra tras un fallo (nunca uno que ya existía).
+- **Log** con rotación (2 MB × 3) en INFO; `faulthandler` a `waveload_crash.log`.
+- **Entorno:** `.venv` + `requirements.lock`; `WAVELOAD_DATA_DIR` para trabajar sobre copias.
+- **Rediseño:** set de iconos SVG propio (`ui/theme/icons.py`) en lugar de emoji, Inter
+  empaquetada con cifras tabulares, hoja de estilos que cubre todos los controles, shell
+  con sidebar de alto completo, estados vacíos unificados (`WLEmptyState`), y Librería,
+  Descargas, Colecciones, Grafo, Ajustes y diálogos rehechos. `preview_card.py` (código
+  muerto) borrado. Se corrigió de paso el hitbox corrido 5 px en la vista previa.
+
+578 tests en verde; `tools/smoke_collections_ui.py` ahora es hermético y recorre los
+caminos reales de la UI.
+
+**Bloqueado en:** nada. Falta probar el `.exe` en una Windows limpia (sprint F).
+**Siguiente:** sprint C del plan (corrección musical: half/double-time, BPM float,
+relación armónica simétrica) y las decisiones abiertas de la sección 5 del plan.
+
+### 2026-10-21 — unidad 12: quitar pistas, archivos faltantes y menú contextual
+**Hecho:** clic derecho sobre pistas en Librería y Colecciones (`ui/controllers/track_actions.py`):
+escuchar, mostrar en el Explorador, volver a analizar, copiar artista y título o ruta,
+ubicar un archivo movido, quitar de la librería (Supr) y quitar mandando el archivo a la
+Papelera (Shift+Supr). `LibraryService` implementa `check_missing_files`, `relocate` y
+`remove_tracks`; el repositorio suma `delete_many` (una transacción, en cascada) y
+`update_audio_path`. La Papelera es `infrastructure/recycle_bin.py` (`SHFileOperationW`
+con `FOF_ALLOWUNDO`): WaveLoad nunca borra un archivo de forma permanente. Las pistas sin
+archivo se marcan en la tabla y se cuentan en el encabezado. 12 tests nuevos; 590 en verde.
+
+**Decidido:**
+- Si un archivo no se pudo mandar a la Papelera, su pista se queda en la librería y se
+  avisa: quitarla igual dejaría el archivo en el disco sin que nada lo muestre.
+- Ubicar un archivo movido conserva análisis, etiquetas y crates (no es quitar + importar).
+- El reproductor suelta el archivo al detenerse; con el archivo abierto Windows no deja
+  moverlo.
+
+**Contexto:** el usuario vació la librería (844 pistas cuyos archivos ya no estaban en la
+ruta guardada) con backup en `waveload_library.backup-20261021-142758.db`.
+**Siguiente:** reubicar una carpeta entera de una vez (hoy es de a una pista) y el sprint C.
+
+### 2026-10-21 — unidad 13: escuchar antes de descargar, fallidas visibles, reproductor
+**Hecho (tres reportes del usuario probando la app):**
+- **Escuchar antes de descargar:** botón de play sobre la miniatura de cada enlace válido
+  en la vista previa (`PreviewDelegate.play_requested`). Antes sólo se podía desde el
+  panel de detalles, que en Descargas está oculto: no había forma.
+- **Fallidas:** un enlace que falla en la vista previa ya no se descarta en silencio al
+  iniciar la tanda; entra como fallido. Los que fallan al validarse emiten `item_finished`
+  y cuentan en el progreso (`DownloadManager._on_item_validated`); una tanda sin nada
+  descargable termina en vez de quedar colgada. El resumen lista cada fallida con su
+  motivo y permite copiar los enlaces. `friendly_error_message` limpia los códigos de
+  color de yt-dlp y traduce copyright, no disponible, privado, edad, país, 403/429, etc.
+- **Reproductor:** barra fija abajo (`ui/shell/player_bar.py`) con qué suena, play/pausa,
+  posición, volumen (se recuerda) y cerrar. Espacio = play/pausa. Doble clic en una pista
+  de la librería la reproduce.
+- **Bug viejo encontrado al verificar:** `_on_batch_finished` leía `self.settings_page`,
+  que `DownloadsWorkspace` nunca tuvo: "Abrir la carpeta al terminar" fallaba en cada tanda
+  desde el primer commit.
+
+600 tests en verde.
+
+### 2026-10-22 — unidad 14: etiquetado manual y género del archivo
+**Hecho:** clic derecho → "Etiquetas…" abre `TagEditorDialog` (género, mood, momento del
+set, estado) para una o varias pistas: muestra en cuántas está cada etiqueta ("1/3"), un
+clic la completa en todas, la cruz la saca. Submenús de un clic para momento y estado.
+Columna "Género" en la tabla (también entra en la búsqueda) y fila "Etiquetas" en el
+panel. Al crearse una pista se lee el Genre del archivo (`read_file_genres`, mutagen
+"easy": MP3, FLAC, M4A) y se normaliza (`genres_from_file_values`: subgéneros de Beatport
+entre paréntesis, separadores, sinónimos, ID3v1). Repositorio: `tags_for_tracks` (una
+consulta por lista) y `edit_tags` (una transacción). El mapper recibe un proveedor de
+tags, así librería, colecciones y grafo los muestran sin pedirlos por fila.
+23 tests nuevos; 623 en verde.
+
+**Decidido:**
+- El género leído del archivo se guarda como `manual` (como prevé §4.7 para lo que se lee
+  del archivo al importar) y sólo si la pista no tiene género: el usuario lo corrige o
+  borra y nada automático lo reescribe.
+- `normalize_value` quita acentos antes de slugificar ("Reggaetón" → `reggaeton`; antes
+  quedaba `reggaet-n`). No había tags guardados con acentos, así que no cambió ninguna
+  identidad existente.
+
+**Dato:** las 87 pistas actuales son descargas de YouTube y ninguna trae Genre en el
+archivo; para ellas el camino es el etiquetado manual.
+**Siguiente:** recalibrar la energía (percentiles + guardar el RMS crudo).
+
+### 2026-10-22 — unidad 15: gestión de colecciones, crates y mapa del grafo
+**Hecho:**
+- **Grafo:** sacar una pista del mapa con clic derecho en el nodo, Supr, o desde la
+  lista y la línea de tiempo (`GraphWorkspace.remove_from_map`); antes sólo con un doble
+  clic no explicado o vaciando el mapa.
+- **Colecciones y crates:** clic derecho en las listas (renombrar F2, duplicar Ctrl+D,
+  congelar, borrar Supr, nueva), "+" para crear crates, doble clic renombra. Un crate
+  abierto se renombra, duplica y borra desde el encabezado como una colección.
+- **Pistas → crates:** "Agregar a crate" en el menú de cualquier tabla de pistas (avisa
+  si ya están) y "Nuevo crate con estas pistas…". En un crate abierto, Supr y "Quitar del
+  crate" sacan del crate, nunca de la librería; en una colección Supr explica cómo
+  excluir en vez de borrar (Shift+Supr sigue al camino normal, con confirmación).
+- `CollectionService`: `create_crate`, `rename_crate`, `duplicate_crate`, `delete_crate`,
+  `add_to_crate`, `remove_from_crate`. `TrackActions.attach` acepta acciones propias de
+  cada pantalla y qué hace Supr ahí. 8 tests nuevos; 631 en verde.
+
+### 2026-10-22 — unidad 16: interfaz adaptable al ancho
+**Hecho:** la tabla de pistas reparte el ancho con `fit_columns` (pura, testeada): el
+título nunca baja de 200 px, Artista y Género se reparten el sobrante y, si no entra
+todo, se ocultan en orden Añadido → Género → Energía → miniatura → Tiempo → Tono. Sin
+barra horizontal; Género no ocupa lugar si ninguna pista tiene. Globo con el texto
+completo en título, artista y género. Grafo: barra compacta bajo 860/720 px, lista
+izquierda flexible (240–300), título del set con prioridad y la ayuda en un globo.
+Ventana mínima 1024×680 (antes 1280×760, más que una laptop 1080p al 125 %).
+Verificado con capturas a escala 1,25 y ventana mínima con el panel abierto.
+15 tests nuevos; 646 en verde.

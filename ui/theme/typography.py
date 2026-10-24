@@ -22,20 +22,15 @@ FONT_FAMILY_PRIMARY = "Inter"
 """Primary UI font — used for all labels, buttons, headings, body text.
 Falls back to system fonts if Inter is not installed."""
 
-FONT_FAMILY_MONO = "JetBrains Mono"
-"""Monospace font — used for file paths, BPM values, technical logs, code.
-Falls back to Consolas, then system monospace."""
+FONT_FAMILY_MONO = "Cascadia Mono"
+"""Monospace font — sólo para logs técnicos y rutas. Viene con Windows 11;
+cae a Consolas en Windows 10. Los números de las tablas no van en mono: van en
+Inter con cifras tabulares (ver ``tabular``)."""
 
 # Fallback chains for QSS (comma-separated for CSS font-family)
-FONT_STACK_PRIMARY = (
-    "'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, "
-    "'Roboto', 'Helvetica Neue', Arial, sans-serif"
-)
+FONT_STACK_PRIMARY = "'Inter', 'Segoe UI', Arial, sans-serif"
 
-FONT_STACK_MONO = (
-    "'JetBrains Mono', 'Cascadia Code', 'Fira Code', "
-    "'Consolas', 'Monaco', monospace"
-)
+FONT_STACK_MONO = "'Cascadia Mono', 'Consolas', monospace"
 
 
 # ---------------------------------------------------------------------------
@@ -132,3 +127,14 @@ def font_mono(
 ) -> QFont:
     """Convenience shortcut for creating a monospace font."""
     return font(size=size, weight=weight, family=FONT_FAMILY_MONO)
+
+
+def tabular(f: QFont) -> QFont:
+    """Activa las cifras tabulares (``tnum``) de Inter: todos los dígitos
+    ocupan lo mismo, así que BPM y duraciones quedan alineados en columna sin
+    recurrir a una fuente monoespaciada."""
+    try:
+        f.setFeature(QFont.Tag("tnum"), 1)
+    except (AttributeError, TypeError):  # Qt < 6.7: sin control de features
+        pass
+    return f

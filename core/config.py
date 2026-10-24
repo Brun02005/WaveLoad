@@ -126,6 +126,15 @@ def _resolve_base_dir() -> Path:
     specific machine's folder permissions to start. This is NOT where
     downloaded music goes — see ``_resolve_download_dir``.
     """
+    # Override explícito: tests, capturas de UI y herramientas que tienen que
+    # trabajar sobre una copia de la librería y nunca sobre la real.
+    override = os.environ.get("WAVELOAD_DATA_DIR")
+    if override:
+        directory = Path(override)
+        if not ensure_writable_dir(directory):
+            raise PermissionError(f"WAVELOAD_DATA_DIR no es escribible: {directory}")
+        return directory
+
     preferred = _preferred_base_dir()
     if ensure_writable_dir(preferred):
         return preferred
@@ -188,6 +197,40 @@ def resolve_download_dir(preferred: Path | None = None) -> Path:
 
 
 BASE_DIR = _resolve_base_dir()
+
+
+def bundle_dir() -> Path | None:
+    """Carpeta donde PyInstaller extrajo los binarios empaquetados (ffmpeg,
+    ffprobe), o None cuando no se corre desde el .exe."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    return Path(meipass) if meipass else None
+
+
+def expose_bundled_binaries() -> None:
+    """Pone la carpeta del bundle al frente del PATH.
+
+    En un .exe onefile ffmpeg vive en ``_MEIPASS``, que no está en el PATH ni
+    en el orden de búsqueda de ``CreateProcess``: sin esto, en una PC sin ffmpeg
+    instalado toda conversión falla. Hacerlo a nivel PATH cubre también a los
+    que lo buscan por su cuenta (audioread, yt-dlp).
+    """
+    bundled = bundle_dir()
+    if bundled is None:
+        return
+    current = os.environ.get("PATH", "")
+    if str(bundled) not in current.split(os.pathsep):
+        os.environ["PATH"] = str(bundled) + os.pathsep + current
+
+
+def ffmpeg_executable() -> str:
+    """Ruta a ffmpeg: la empaquetada si existe, si no el nombre a secas para
+    que la resuelva el PATH."""
+    bundled = bundle_dir()
+    if bundled is not None:
+        candidate = bundled / "ffmpeg.exe"
+        if candidate.exists():
+            return str(candidate)
+    return "ffmpeg"
 
 # The default download folder as a plain path. Deliberately NOT created here —
 # SettingsService.get_output_dir() resolves and creates the folder actually in

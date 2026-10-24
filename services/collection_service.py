@@ -150,6 +150,27 @@ class CollectionService:
             collection.with_layer(QueryLayer(predicate=predicate, mode=mode))
         )
 
+    def replace_layer(
+        self,
+        collection: SmartCollection,
+        position: int,
+        predicate: Node,
+        mode: LayerMode,
+    ) -> SmartCollection:
+        """Cambia predicado y modo de una capa sin moverla ni tocar ``enabled``.
+
+        Editar una capa apagada no puede prenderla: el usuario la editó, no la
+        activó.
+        """
+        capas = tuple(
+            replace(capa, predicate=predicate, mode=mode)
+            if capa.position == position else capa
+            for capa in collection.ordered_layers()
+        )
+        if not any(capa.position == position for capa in collection.layers):
+            raise ValueError(f"No hay una capa en la posición {position}")
+        return self.repo.save(replace(collection, layers=capas))
+
     def remove_layer(self, collection: SmartCollection, position: int) -> SmartCollection:
         return self.repo.save(collection.without_layer(position))
 
@@ -182,13 +203,21 @@ class CollectionService:
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> CollectionPage:
         """Una página de resultados con los tracks completos, en orden."""
-        resultado = self.evaluator.evaluate(collection, limit=page_size, offset=offset)
-        tracks = self.tracks.get_by_ids(list(resultado.track_ids))
         total = self.evaluator.count(collection)
+        tamano = page_size
         if collection.limit is not None:
             # El límite guardado acota el resultado; la paginación no puede
-            # mostrar más allá de eso.
+            # mostrar más allá de eso. Pedir la página con limit=page_size
+            # pisaba el límite: con límite 10 devolvía 200 tracks.
             total = min(total, collection.limit)
+            tamano = max(0, min(page_size, collection.limit - offset))
+        if tamano == 0:
+            return CollectionPage(
+                collection=collection, tracks=(), offset=offset,
+                page_size=page_size, total=total, elapsed_ms=0.0,
+            )
+        resultado = self.evaluator.evaluate(collection, limit=tamano, offset=offset)
+        tracks = self.tracks.get_by_ids(list(resultado.track_ids))
         return CollectionPage(
             collection=collection,
             tracks=tuple(tracks),
@@ -271,8 +300,61 @@ class CollectionService:
 
     # --- crates -----------------------------------------------------------
 
+    def get_crate(self, crate_id: int) -> Crate:
+        return self.repo.get_crate(crate_id)
+
     def list_crates(self) -> list[Crate]:
         return self.repo.list_crates()
+
+    def create_crate(self, name: Optional[str] = None, track_ids=()) -> Crate:
+        """Un crate nuevo, con un nombre libre si el pedido ya existe."""
+        base = (name or "").strip() or "Nuevo crate"
+        unicos = list(dict.fromkeys(str(t) for t in track_ids))
+        return self.repo.save_crate(Crate(name=self._free_crate_name(base), track_ids=tuple(unicos)))
+
+    def rename_crate(self, crate_id: int, name: str) -> Crate:
+        crate = self.repo.get_crate(crate_id)
+        nombre = name.strip()
+        if nombre == crate.name:
+            return crate
+        if any(c.name == nombre for c in self.repo.list_crates()):
+            raise ValueError(f"Ya hay un crate llamado «{nombre}»")
+        return self.repo.save_crate(replace(crate, name=nombre))
+
+    def duplicate_crate(self, crate_id: int) -> Crate:
+        crate = self.repo.get_crate(crate_id)
+        return self.repo.save_crate(
+            Crate(name=self._free_crate_name(f"{crate.name} (copia)"), track_ids=crate.track_ids)
+        )
+
+    def delete_crate(self, crate_id: int) -> bool:
+        """Borra el crate. Las pistas no se tocan: siguen en la librería."""
+        return self.repo.delete_crate(crate_id)
+
+    def add_to_crate(self, crate_id: int, track_ids) -> tuple[Crate, int]:
+        """Agrega pistas al final del crate, en el orden dado. Las que ya
+        estaban no se repiten ni cambian de lugar. Devuelve (crate, agregadas)."""
+        crate = self.repo.get_crate(crate_id)
+        agregadas = 0
+        for track_id in track_ids:
+            if str(track_id) not in crate.track_ids:
+                crate = crate.with_track(str(track_id))
+                agregadas += 1
+        if agregadas:
+            crate = self.repo.save_crate(crate)
+        return crate, agregadas
+
+    def remove_from_crate(self, crate_id: int, track_ids) -> tuple[Crate, int]:
+        """Saca pistas del crate (no de la librería). Devuelve (crate, quitadas)."""
+        crate = self.repo.get_crate(crate_id)
+        quitadas = 0
+        for track_id in track_ids:
+            if str(track_id) in crate.track_ids:
+                crate = crate.without_track(str(track_id))
+                quitadas += 1
+        if quitadas:
+            crate = self.repo.save_crate(crate)
+        return crate, quitadas
 
     def crate_tracks(self, crate: Crate) -> tuple:
         """Los tracks de un crate, en el orden en que el usuario los puso."""

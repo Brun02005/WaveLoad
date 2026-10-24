@@ -11,6 +11,28 @@ logger = logging.getLogger(__name__)
 # the app was launched.
 LIBRARY_DB_PATH = BASE_DIR / "waveload_library.db"
 
+# Segundos que una conexión espera a que otra suelte el lock antes de fallar
+# con "database is locked". La descarga, el auto-tagging y el análisis
+# escriben desde hilos distintos.
+_BUSY_TIMEOUT_S = 10
+
+
+class _ClosingConnection(sqlite3.Connection):
+    """Conexión que además de commitear/rollbackear al salir del ``with``, se
+    cierra.
+
+    El ``with`` de sqlite3 no cierra: la conexión quedaba viva hasta que la
+    recolectaba el GC, y en Windows eso impide mover o respaldar la base
+    mientras el proceso vive.
+    """
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+
 class DatabaseManager:
     """
     Manages the new library database connection and schema preparation
@@ -24,10 +46,15 @@ class DatabaseManager:
 
     def get_connection(self) -> sqlite3.Connection:
         """Returns a configured SQLite connection."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(
+            str(self.db_path), timeout=_BUSY_TIMEOUT_S, factory=_ClosingConnection
+        )
         conn.row_factory = sqlite3.Row
         # Enable foreign keys
         conn.execute("PRAGMA foreign_keys = ON")
+        # WAL: los lectores no bloquean al escritor ni al revés. Es persistente
+        # en el archivo, así que después de la primera vez es un no-op.
+        conn.execute("PRAGMA journal_mode = WAL")
         return conn
 
     def _initialize_schema(self):

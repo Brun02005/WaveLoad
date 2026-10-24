@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
 from domain.query_ast import (
+    NUMERIC_FIELDS,
     BoolNode,
     CompareNode,
     Node,
@@ -148,14 +149,31 @@ class LayerForm:
         return separador.join(c.describe() for c in self.conditions)
 
 
+def _drawable(node: Node) -> bool:
+    """Si el diálogo tiene controles para esta hoja.
+
+    Un `range` se edita con dos campos numéricos cerrados. Uno abierto
+    (``bpm >= 120``) se abría como "entre 0 y 120" y al guardarlo invertía la
+    capa sin avisar; uno sobre una fecha hacía fallar al diálogo. Esos quedan
+    de sólo lectura, igual que cualquier AST que no entra en el formulario.
+    """
+    if isinstance(node, RangeNode):
+        return (
+            node.field in NUMERIC_FIELDS
+            and node.min is not None
+            and node.max is not None
+        )
+    return isinstance(node, LEAF_TYPES)
+
+
 def _as_condition(node: Node) -> Optional[Condition]:
     """Convierte una hoja, o un `not` sobre una hoja, en una condición."""
-    if isinstance(node, LEAF_TYPES):
+    if _drawable(node):
         return Condition(node, negated=False)
     if (
         isinstance(node, BoolNode)
         and node.bool_op == "not"
-        and isinstance(node.nodes[0], LEAF_TYPES)
+        and _drawable(node.nodes[0])
     ):
         return Condition(node.nodes[0], negated=True)
     return None

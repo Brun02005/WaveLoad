@@ -18,9 +18,10 @@ class DownloadWorker(QRunnable):
     Worker for the download phase. 
     Only acquires the media file (no post-processing).
     """
-    def __init__(self, item: DownloadItem):
+    def __init__(self, item: DownloadItem, use_cookies: bool = True):
         super().__init__()
         self.item = item
+        self.use_cookies = use_cookies
         self.signals = DownloadWorkerSignals()
         self._cancelled = False
         self._downloaded_file = None
@@ -60,7 +61,8 @@ class DownloadWorker(QRunnable):
                 url=self.item.url,
                 output_template=outtmpl,
                 audio_quality="320", # Not strictly used here if no postprocessor in yt-dlp
-                progress_hook=self._progress_hook
+                progress_hook=self._progress_hook,
+                use_cookies=self.use_cookies,
             )
 
             if self._cancelled:

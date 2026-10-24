@@ -1,4 +1,6 @@
 import logging
+
+from core.utils import friendly_error_message
 from typing import List, Optional
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal, QThread, QRunnable, QThreadPool
@@ -22,9 +24,12 @@ class ValidationSignals(QObject):
     batch_finished = Signal()
 
 class BatchValidationWorker(QRunnable):
-    def __init__(self, urls: List[str], output_dir: Path):
+    def __init__(self, urls: List[str], output_dir: Path, start_index: int = 0):
         super().__init__()
         self.urls = urls
+        # Los índices que emite son globales (los de la UI), no relativos a
+        # esta tanda: así quien escucha no necesita traducirlos.
+        self.start_index = start_index
         self.output_dir = output_dir
         self.signals = ValidationSignals()
         self._cancelled = False
@@ -35,32 +40,32 @@ class BatchValidationWorker(QRunnable):
     def run(self):
         valid_items = []
         total = len(self.urls)
-        
+
         # Initialize cookie session once for the batch
         if self.urls:
             cookie_service.initialize_session(self.urls[0])
 
-        for index, url in enumerate(self.urls):
+        for index, url in enumerate(self.urls, start=self.start_index):
             if self._cancelled:
                 break
-                
+
             self.signals.item_progress.emit(index, "Validando...")
             try:
                 metadata = MetadataService.extract_metadata(url)
-                
+
                 # Check for duplicates or invalid using the unified path builder
                 from core.utils import build_final_mp3_path
                 title = metadata.get("title", "Desconocido")
                 final_mp3 = build_final_mp3_path(self.output_dir, title)
-                
+
                 if final_mp3.exists():
                     self.signals.item_validated.emit(index, title, "duplicado", "Ya existe en la carpeta.")
                     continue
-                    
+
                 if metadata.get("is_playlist"):
                     self.signals.item_validated.emit(index, title, "playlist", "Las playlists todavía no están soportadas.")
                     continue
-                    
+
                 resolved_url = metadata.get("url") or url
                 item = DownloadItem(
                     id=url,
@@ -75,10 +80,10 @@ class BatchValidationWorker(QRunnable):
                 )
                 valid_items.append(item)
                 self.signals.item_validated.emit(index, title, "valido", "Listo para descargar.")
-                
+
             except Exception as e:
                 self.signals.item_validated.emit(index, "—", "error", str(e))
-                
+
         self.signals.batch_ready.emit(valid_items)
         self.signals.batch_finished.emit()
 
@@ -100,14 +105,14 @@ class DownloadManager(QObject):
         self.queue_manager = QueueManager()
         self.scheduler = Scheduler(self.queue_manager)
         self.session_store = SessionStore()
-        
+
         self.scheduler.signals.item_updated.connect(self._on_item_updated)
         self.scheduler.signals.batch_finished.connect(self._on_scheduler_batch_finished)
-        
+
         self._url_to_index = {} # Map URLs to UI indices
         self._total_batch = 0
         self._completed_in_batch = 0
-        
+
         self.thread_pool = QThreadPool()
 
         # Try to recover session
@@ -116,7 +121,7 @@ class DownloadManager(QObject):
     def _recover_session(self):
         items = self.session_store.load_session()
         if items:
-            self.log.emit(f"🔄 Recuperando sesión anterior con {len(items)} descargas.")
+            self.log.emit(f"Recuperando la sesión anterior: {len(items)} descargas.")
             for item in items:
                 # Add to queue but don't emit index-based signals yet since UI doesn't know about them
                 self.queue_manager.add_item(item)
@@ -136,50 +141,65 @@ class DownloadManager(QObject):
         # resolve_download_dir() creates the folder and falls back if it's not
         # writable, so a download never fails just because it's missing.
         output_dir = resolve_download_dir(output_dir)
-        
+        self.scheduler.configure(audio_quality, use_browser_auth)
+
         # We need to map new URLs to new UI indices
         start_index = len(self._url_to_index)
         for i, url in enumerate(urls):
             self._url_to_index[url] = start_index + i
-            
+
         self._total_batch += len(urls)
 
-        worker = BatchValidationWorker(urls, output_dir)
+        worker = BatchValidationWorker(urls, output_dir, start_index)
         worker.signals.log.connect(self.log.emit)
-        
-        # Wrap index mapping
-        def emit_validated(idx, t, s, d):
-            # idx is relative to the current batch, map it globally
-            global_idx = start_index + idx
-            self.item_validated.emit(global_idx, t, s, d)
-            
-        def emit_progress(idx, p):
-            global_idx = start_index + idx
-            self.item_progress.emit(global_idx, p)
-            
-        worker.signals.item_validated.connect(emit_validated)
-        worker.signals.item_progress.connect(emit_progress)
+        # Métodos de este QObject, no lambdas: así las señales del hilo del
+        # worker llegan encoladas al hilo principal, donde vive el contador.
+        worker.signals.item_validated.connect(self._on_item_validated)
+        worker.signals.item_progress.connect(self.item_progress.emit)
         worker.signals.batch_ready.connect(self._on_batch_validated)
-        
+
         self.thread_pool.start(worker)
+
+    def _on_item_validated(self, index: int, title: str, status: str, detail: str):
+        """Un enlace terminó de validarse.
+
+        Si no se va a descargar (no disponible, duplicado, playlist) eso ya es
+        su resultado final en la tanda: se informa como terminado y cuenta en
+        el progreso. Antes la tarjeta se pintaba de rojo pero no contaba como
+        fallida y el progreso nunca llegaba al total.
+        """
+        self.item_validated.emit(index, title, status, detail)
+        if status in ("error", "invalido", "playlist"):
+            self.item_finished.emit(index, "error", friendly_error_message(detail))
+            self._count_terminal()
+        elif status == "duplicado":
+            self.item_finished.emit(index, "duplicado", detail)
+            self._count_terminal()
+
+    def _count_terminal(self):
+        self._completed_in_batch += 1
+        self.batch_progress.emit(self._completed_in_batch, self._total_batch)
 
     def _on_batch_validated(self, items: List[DownloadItem]):
         for item in items:
             self.queue_manager.add_item(item)
-            
+
         self._save_session()
-        
+
         if items:
-            self.log.emit(f"⬇️ Añadidas {len(items)} canciones a la cola.")
+            self.log.emit(f"{len(items)} pistas en cola")
             self.scheduler.start()
         else:
-            self.log.emit("⚠️ No hay links válidos para procesar.")
+            # Ninguno quedó para descargar (todos fallaron o ya estaban): la
+            # tanda termina acá. Antes se quedaba esperando para siempre.
+            self.log.emit("No hay enlaces válidos para procesar")
+            self._on_scheduler_batch_finished()
 
     def _on_item_updated(self, item_id: str):
         item = self.queue_manager.get_item(item_id)
         if not item:
             return
-            
+
         index = self._url_to_index.get(item_id, -1)
         if index == -1:
             return
@@ -187,33 +207,33 @@ class DownloadManager(QObject):
         # Emit progress
         if item.progress_text:
             self.item_progress.emit(index, item.progress_text)
-            
+
         # Emit finished
         if item.state.is_terminal:
             status = "ok" if item.state == DownloadState.COMPLETED else ("cancelado" if item.state == DownloadState.CANCELLED else "error")
             name = item.final_mp3_path.name if item.final_mp3_path else (item.error_message or item.title)
             self.item_finished.emit(index, status, name)
-            
+
             self._completed_in_batch += 1
             self.batch_progress.emit(self._completed_in_batch, self._total_batch)
-            
+
             self._save_session()
 
     def _on_scheduler_batch_finished(self):
         # Once all tasks in queue are terminal
-        self.log.emit("🏁 Toda la cola ha finalizado.")
+        self.log.emit("Cola terminada")
         self.batch_finished.emit()
         self.session_store.clear_session()
         cookie_service.cleanup_session()
 
     def cancel(self):
-        self.log.emit("⛔ Cancelación solicitada. Vaciando cola...")
+        self.log.emit("Cancelación solicitada, vaciando la cola")
         self.scheduler.stop()
         for item in self.queue_manager.get_all_items():
             if not item.state.is_terminal:
                 self.queue_manager.update_item_state(item.id, DownloadState.CANCELLED, "Cancelado")
                 self._on_item_updated(item.id)
-        
+
         self.session_store.clear_session()
         cookie_service.cleanup_session()
 

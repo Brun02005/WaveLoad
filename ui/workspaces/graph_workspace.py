@@ -14,19 +14,22 @@ from typing import Dict, List, Any, Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGraphicsView, QGraphicsScene,
     QGraphicsItem, QGraphicsLineItem, QStackedWidget, QListWidget, QListWidgetItem,
-    QLineEdit, QStyledItemDelegate, QStyle, QCheckBox, QComboBox, QScrollArea,
+    QLineEdit, QStyledItemDelegate, QStyle, QCheckBox, QComboBox, QScrollArea, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QRectF, QRect, QPointF, QSize, Signal
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QFontMetrics
 
 from ui.workspaces.base_workspace import BaseWorkspace
 from ui.theme.colors import (
-    ACCENT, ACCENT_MUTED, SURFACE_BASE, SURFACE_1, SURFACE_3, TEXT_PRIMARY,
-    TEXT_SECONDARY, TEXT_MUTED, BORDER_DEFAULT,
+    ACCENT, ACCENT_MUTED, SURFACE_BASE, SURFACE_1, SURFACE_2, SURFACE_3, SURFACE_4,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, BORDER_DEFAULT, BORDER_SUBTLE,
+    PRIMARY_ORANGE,
 )
-from ui.theme.typography import FONT_FAMILY_MONO
-from ui.theme.icons import Icons
-from ui.components.buttons import WLSecondaryButton, WLIconButton
+from ui.theme.typography import FONT_FAMILY_PRIMARY, tabular
+from ui.theme.icons import Icons, icon, pixmap
+from ui.components.buttons import WLPrimaryButton, WLSecondaryButton, WLIconButton
+from ui.components.empty_state import WLEmptyState
+from ui.components.inputs import WLSearchInput
 from ui.components.tables import camelot_qcolors
 from services.graph_service import GraphService
 from services.similarity_service import SimilarityEngine
@@ -75,11 +78,11 @@ class StepDelegate(QStyledItemDelegate):
             painter.setPen(QPen(QColor(ACCENT), 1))
         else:
             painter.setPen(QPen(QColor(BORDER_DEFAULT), 0.5))
-        painter.setBrush(QColor(SURFACE_BASE))
-        painter.drawRoundedRect(rect, 6, 6)
+        painter.setBrush(QColor(SURFACE_3))
+        painter.drawRoundedRect(rect, 8, 8)
 
-        pad = 7
-        nf = QFont(FONT_FAMILY_MONO); nf.setPixelSize(10)
+        pad = 8
+        nf = tabular(QFont(FONT_FAMILY_PRIMARY)); nf.setPixelSize(10)
         painter.setFont(nf); painter.setPen(QColor(TEXT_MUTED))
         painter.drawText(QRect(rect.left() + pad, rect.top() + 5, 18, 14),
                          Qt.AlignLeft | Qt.AlignVCenter, str(index.row() + 1))
@@ -88,22 +91,20 @@ class StepDelegate(QStyledItemDelegate):
         chip = QRect(rect.left() + pad + 16, rect.top() + 5, 30, 16)
         painter.setPen(Qt.NoPen); painter.setBrush(bg)
         painter.drawRoundedRect(chip, 8, 8)
-        cf = QFont(FONT_FAMILY_MONO); cf.setPixelSize(9); cf.setBold(True)
+        cf = tabular(QFont(FONT_FAMILY_PRIMARY)); cf.setPixelSize(9); cf.setBold(True)
         painter.setFont(cf); painter.setPen(fg)
         painter.drawText(chip, Qt.AlignCenter, key)
         if warns:
-            painter.setPen(QColor("#E0A83A"))
-            wf = QFont(); wf.setPixelSize(11); painter.setFont(wf)
-            painter.drawText(QRect(rect.right() - pad - 14, rect.top() + 4, 14, 14),
-                             Qt.AlignCenter, "⚠")
+            painter.drawPixmap(rect.right() - pad - 13, rect.top() + 6,
+                               pixmap(Icons.WARNING, 13, PRIMARY_ORANGE))
 
         tw = rect.width() - 2 * pad
-        tf = QFont(); tf.setPixelSize(11); painter.setFont(tf)
+        tf = QFont(FONT_FAMILY_PRIMARY); tf.setPixelSize(11); painter.setFont(tf)
         painter.setPen(QColor(TEXT_PRIMARY))
         title = QFontMetrics(tf).elidedText(str(t.get("title", "—")), Qt.ElideRight, tw)
         painter.drawText(QRect(rect.left() + pad, rect.top() + 24, tw, 15),
                          Qt.AlignLeft | Qt.AlignVCenter, title)
-        mf = QFont(FONT_FAMILY_MONO); mf.setPixelSize(10); painter.setFont(mf)
+        mf = tabular(QFont(FONT_FAMILY_PRIMARY)); mf.setPixelSize(10); painter.setFont(mf)
         painter.setPen(QColor(TEXT_MUTED))
         painter.drawText(QRect(rect.left() + pad, rect.bottom() - 16, tw, 14),
                          Qt.AlignLeft | Qt.AlignVCenter,
@@ -145,12 +146,17 @@ class TrackListDelegate(QStyledItemDelegate):
         on_map = bool(index.data(_ONMAP_ROLE))
         rect = option.rect
 
+        card = rect.adjusted(0, 1, 0, -1)
+        painter.setPen(Qt.NoPen)
         if option.state & QStyle.State_Selected:
-            painter.fillRect(rect, QColor(SURFACE_3))
+            painter.setBrush(QColor(SURFACE_4))
+            painter.drawRoundedRect(card, 6, 6)
+        elif option.state & QStyle.State_MouseOver:
+            painter.setBrush(QColor(SURFACE_3))
+            painter.drawRoundedRect(card, 6, 6)
         elif on_map:
-            painter.fillRect(rect, QColor(ACCENT_MUTED))
-        painter.setPen(QPen(QColor(BORDER_DEFAULT), 0.5))
-        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+            painter.setBrush(QColor(ACCENT_MUTED))
+            painter.drawRoundedRect(card, 6, 6)
 
         pad = 10
         key = str(t.get("key", "—"))
@@ -159,20 +165,20 @@ class TrackListDelegate(QStyledItemDelegate):
         painter.setPen(Qt.NoPen)
         painter.setBrush(bg)
         painter.drawRoundedRect(chip, 10, 10)
-        cf = QFont(FONT_FAMILY_MONO); cf.setPixelSize(10); cf.setBold(True)
+        cf = tabular(QFont(FONT_FAMILY_PRIMARY)); cf.setPixelSize(10); cf.setBold(True)
         painter.setFont(cf)
         painter.setPen(fg)
         painter.drawText(chip, Qt.AlignCenter, key)
 
         tx = chip.right() + 10
         tw = max(20, rect.right() - tx - pad - 14)
-        tf = QFont(); tf.setPixelSize(12)
+        tf = QFont(FONT_FAMILY_PRIMARY); tf.setPixelSize(12)
         painter.setFont(tf)
         painter.setPen(QColor(TEXT_PRIMARY))
         title = QFontMetrics(tf).elidedText(str(t.get("title", "—")), Qt.ElideRight, tw)
         painter.drawText(QRect(tx, rect.top() + 6, tw, 16), Qt.AlignLeft | Qt.AlignVCenter, title)
 
-        sf = QFont(); sf.setPixelSize(10)
+        sf = tabular(QFont(FONT_FAMILY_PRIMARY)); sf.setPixelSize(11)
         painter.setFont(sf)
         painter.setPen(QColor(TEXT_MUTED))
         sub = f"{t.get('bpm', '—')} BPM · {t.get('artist', '—')}"
@@ -180,9 +186,8 @@ class TrackListDelegate(QStyledItemDelegate):
         painter.drawText(QRect(tx, rect.bottom() - 20, tw, 14), Qt.AlignLeft | Qt.AlignVCenter, sub)
 
         if on_map:
-            painter.setPen(QColor(ACCENT))
-            painter.drawText(QRect(rect.right() - pad - 14, rect.top(), 14, rect.height()),
-                             Qt.AlignCenter, "✓")
+            painter.drawPixmap(rect.right() - pad - 14, rect.center().y() - 7,
+                               pixmap(Icons.CHECK, 14, ACCENT))
         painter.restore()
 
 logger = logging.getLogger(__name__)
@@ -280,10 +285,10 @@ class NodeItem(QGraphicsItem):
             | QGraphicsItem.ItemSendsGeometryChanges
         )
         self.setZValue(2)
-        self._cam_font = QFont(FONT_FAMILY_MONO)
+        self._cam_font = tabular(QFont(FONT_FAMILY_PRIMARY))
         self._cam_font.setPixelSize(11)
         self._cam_font.setBold(True)
-        self._title_font = QFont()
+        self._title_font = QFont(FONT_FAMILY_PRIMARY)
         self._title_font.setPixelSize(9)
 
     def boundingRect(self) -> QRectF:
@@ -336,7 +341,7 @@ class NodeItem(QGraphicsItem):
             painter.setBrush(QColor(ACCENT))
             painter.drawRoundedRect(badge, 4, 4)
             painter.setPen(QColor("#08130d"))
-            bf = QFont(); bf.setPixelSize(9); bf.setBold(True)
+            bf = QFont(FONT_FAMILY_PRIMARY); bf.setPixelSize(9); bf.setBold(True)
             painter.setFont(bf)
             painter.drawText(badge, Qt.AlignCenter, letter)
 
@@ -347,7 +352,7 @@ class NodeItem(QGraphicsItem):
             painter.setBrush(QColor(ACCENT))
             painter.drawEllipse(QPointF(cx, cy), r2, r2)
             painter.setPen(QColor("#08130d"))
-            of = QFont(); of.setPixelSize(10); of.setBold(True)
+            of = QFont(FONT_FAMILY_PRIMARY); of.setPixelSize(10); of.setBold(True)
             painter.setFont(of)
             painter.drawText(QRectF(cx - r2, cy - r2, 2 * r2, 2 * r2),
                              Qt.AlignCenter, str(self.order_number))
@@ -383,10 +388,22 @@ class GraphView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
         self.setBackgroundBrush(QColor(SURFACE_BASE))
+        self.setFrameShape(QGraphicsView.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._panning = False
         self._pan_start = QPointF()
+        # Lo fija el workspace: qué hacer con los nodos seleccionados al apretar Supr.
+        self.on_delete = None
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.on_delete is not None:
+            ids = [it.node_id for it in self.scene().selectedItems() if hasattr(it, "node_id")]
+            if ids:
+                self.on_delete(ids)
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def wheelEvent(self, event):
         factor = 1.16 if event.angleDelta().y() > 0 else 1 / 1.16
@@ -460,59 +477,64 @@ class GraphWorkspace(BaseWorkspace):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Toolbar
+        # Barra: a la izquierda, armar el set (tipo de evento, prioridad,
+        # armar); a la derecha, acciones sobre el mapa. El nombre de la sección
+        # ya está en la toolbar de la ventana.
         bar = QWidget()
-        bar.setStyleSheet(f"background-color: {SURFACE_1}; border-bottom: 1px solid {BORDER_DEFAULT};")
+        bar.setObjectName("wl_graphBar")
+        bar.setAttribute(Qt.WA_StyledBackground, True)
+        bar.setStyleSheet(f"#wl_graphBar {{ background-color: {SURFACE_2};"
+                          f" border-bottom: 1px solid {BORDER_SUBTLE}; }}")
         bl = QHBoxLayout(bar)
-        bl.setContentsMargins(14, 8, 14, 8)
-        title = QLabel("Music Knowledge Graph")
-        title.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {TEXT_PRIMARY};")
-        bl.addWidget(title)
-        self.lbl_stats = QLabel("")
-        self.lbl_stats.setStyleSheet(f"font-size: 12px; color: {TEXT_MUTED};")
-        bl.addWidget(self.lbl_stats)
-        bl.addStretch()
+        bl.setContentsMargins(16, 10, 12, 10)
+        bl.setSpacing(8)
         self.event_combo = QComboBox()
         for key, label in EVENT_PRESETS.items():
             self.event_combo.addItem(label, key)
-        self.event_combo.addItem("Personalizada", "custom")
+        self.event_combo.addItem("Curva personalizada", "custom")
         self.event_combo.setCurrentIndex(1)  # club prime-time
-        self.event_combo.setToolTip("Tipo de evento — define la curva de energía del set")
+        self.event_combo.setMinimumWidth(170)
+        self.event_combo.setToolTip("Tipo de evento: define la curva de energía del set")
         self.event_combo.currentIndexChanged.connect(self._on_event_changed)
         bl.addWidget(self.event_combo)
-        self.btn_edit_curve = WLSecondaryButton("Editar curva")
-        self.btn_edit_curve.setToolTip("Journey Designer — dibujá tu curva de energía")
+        self.btn_edit_curve = WLIconButton(Icons.EDIT, tooltip="Dibujar la curva de energía")
         self.btn_edit_curve.setVisible(False)
         self.btn_edit_curve.clicked.connect(self._open_journey)
         bl.addWidget(self.btn_edit_curve)
-        self.btn_build = WLSecondaryButton("Armar set")
-        self.btn_build.setToolTip("Genera un orden con curva de energía + flujo armónico")
-        bl.addWidget(self.btn_build)
+        bl.addSpacing(10)
         from PySide6.QtWidgets import QSlider  # noqa: PLC0415
         lam_lbl = QLabel("Flujo")
-        lam_lbl.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
+        lam_lbl.setObjectName("wl_caption")
+        self._lam_labels = [lam_lbl]
         bl.addWidget(lam_lbl)
         self.lam_slider = QSlider(Qt.Horizontal)
-        self.lam_slider.setFixedWidth(80)
+        self.lam_slider.setFixedWidth(90)
         self.lam_slider.setRange(0, 100)
         self.lam_slider.setValue(60)
-        self.lam_slider.setToolTip("Prioridad: flujo de mezcla ↔ curva de energía")
+        self.lam_slider.setToolTip(
+            "Qué pesa más al ordenar: que las transiciones sean suaves (flujo) "
+            "o que la energía siga la curva del evento"
+        )
         bl.addWidget(self.lam_slider)
         lam_lbl2 = QLabel("Curva")
-        lam_lbl2.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
+        lam_lbl2.setObjectName("wl_caption")
+        self._lam_labels.append(lam_lbl2)
         bl.addWidget(lam_lbl2)
-        self.btn_route = WLSecondaryButton("Buscar ruta")
+        bl.addSpacing(10)
+        self.btn_build = WLPrimaryButton("Armar set", icon=Icons.SET, height=32)
+        self.btn_build.setToolTip("Ordena las pistas del mapa siguiendo la curva y el flujo armónico")
+        bl.addWidget(self.btn_build)
+        bl.addStretch()
+        self.btn_route = WLIconButton(Icons.ROUTE, tooltip="Buscar ruta: elegí dos pistas del mapa")
         self.btn_route.setCheckable(True)
-        self.btn_route.setToolTip("Elegí dos pistas del mapa para trazar el mejor recorrido")
-        self.btn_clear_route = WLSecondaryButton("Limpiar")
-        self.btn_clear_all = WLSecondaryButton("Vaciar mapa")
+        self.btn_clear_route = WLIconButton(Icons.CLOSE, tooltip="Quitar resaltados")
+        self.btn_clear_all = WLIconButton(Icons.CLEAR, tooltip="Vaciar el mapa")
         bl.addWidget(self.btn_route)
         bl.addWidget(self.btn_clear_route)
         bl.addWidget(self.btn_clear_all)
-        self.btn_info = WLIconButton(Icons.INFO)
+        self.btn_info = WLIconButton(Icons.PANEL, tooltip="Mostrar u ocultar el panel de detalles")
         self.btn_info.setCheckable(True)
         self.btn_info.setChecked(True)
-        self.btn_info.setToolTip("Mostrar/Ocultar panel de detalles")
         bl.addWidget(self.btn_info)
         root.addWidget(bar)
 
@@ -522,48 +544,56 @@ class GraphWorkspace(BaseWorkspace):
         body.setSpacing(0)
 
         left = QWidget()
-        left.setFixedWidth(320)
-        left.setStyleSheet(f"background-color: {SURFACE_1}; border-right: 1px solid {BORDER_DEFAULT};")
+        left.setObjectName("wl_graphList")
+        left.setAttribute(Qt.WA_StyledBackground, True)
+        # Ancho flexible: con poco lugar cede hasta 240 en vez de quedar tapada
+        # por el lienzo.
+        left.setMinimumWidth(240)
+        left.setMaximumWidth(300)
+        left.setStyleSheet(f"#wl_graphList {{ background-color: {SURFACE_1};"
+                           f" border-right: 1px solid {BORDER_SUBTLE}; }}")
         ll = QVBoxLayout(left)
-        ll.setContentsMargins(10, 10, 10, 10)
+        ll.setContentsMargins(12, 14, 12, 12)
         ll.setSpacing(8)
-        hint = QLabel("Doble click para agregar / quitar del mapa")
-        hint.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED};")
-        hint.setWordWrap(True)
-        ll.addWidget(hint)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Buscar pista o artista…")
-        self.search.setObjectName("wl_searchInput")
+        self.lbl_stats = QLabel("")
+        self.lbl_stats.setObjectName("wl_caption")
+        self.lbl_stats.setToolTip("Doble clic en una pista para sumarla al mapa o sacarla")
+        ll.addWidget(self.lbl_stats)
+        self.search = WLSearchInput(placeholder="Buscar pista o artista")
         ll.addWidget(self.search)
-        self.chk_compat = QCheckBox("Solo compatibles con la selección")
+        self.chk_compat = QCheckBox("Sólo compatibles con la selección")
         self.chk_compat.setChecked(True)
-        self.chk_compat.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 11px;")
+        self.chk_compat.setStyleSheet(f"color: {TEXT_SECONDARY};")
         ll.addWidget(self.chk_compat)
         self.sort_combo = QComboBox()
-        self.sort_combo.addItem("Ordenar: Título (A-Z)", "alpha")
-        self.sort_combo.addItem("Ordenar: BPM ↑ (menor→mayor)", "bpm_asc")
-        self.sort_combo.addItem("Ordenar: BPM ↓ (mayor→menor)", "bpm_desc")
+        self.sort_combo.addItem("Título, A a Z", "alpha")
+        self.sort_combo.addItem("BPM, de menor a mayor", "bpm_asc")
+        self.sort_combo.addItem("BPM, de mayor a menor", "bpm_desc")
         self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         ll.addWidget(self.sort_combo)
         self.track_list = QListWidget()
+        self.track_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.track_list.customContextMenuRequested.connect(self._on_list_context)
+        self.track_list.setToolTip("Doble clic para sumar una pista al mapa o sacarla")
         self.track_list.setItemDelegate(TrackListDelegate(self.track_list))
         self.track_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.track_list.setUniformItemSizes(True)
-        self.track_list.setStyleSheet(
-            f"QListWidget {{ background: {SURFACE_BASE}; border: 1px solid {BORDER_DEFAULT};"
-            f" border-radius: 6px; outline: none; }}"
-        )
+        self.track_list.setMouseTracking(True)
         ll.addWidget(self.track_list, 1)
         body.addWidget(left)
 
         self.stack = QStackedWidget()
-        self.empty_hint = QLabel("Agregá pistas desde la lista para empezar a armar tu set")
-        self.empty_hint.setAlignment(Qt.AlignCenter)
-        self.empty_hint.setStyleSheet(f"font-size: 15px; color: {TEXT_SECONDARY};")
+        self.empty_hint = WLEmptyState(
+            Icons.GRAPH,
+            "El mapa está vacío",
+            "Hacé doble clic en pistas de la lista para sumarlas. El mapa las ubica "
+            "según qué tan bien mezclan entre sí, y desde acá armás el set.",
+        )
         self.stack.addWidget(self.empty_hint)
         self.scene = QGraphicsScene()
         self.scene.setBackgroundBrush(QColor(SURFACE_BASE))
         self.view = GraphView(self.scene)
+        self.view.on_delete = self.remove_from_map
         self.stack.addWidget(self.view)
         self.stack.setCurrentWidget(self.empty_hint)
         body.addWidget(self.stack, 1)
@@ -572,26 +602,31 @@ class GraphWorkspace(BaseWorkspace):
 
         # Bottom "Set sugerido" timeline (hidden until a set is generated).
         self.set_panel = QWidget()
-        self.set_panel.setFixedHeight(104)
-        self.set_panel.setStyleSheet(f"background-color: {SURFACE_1}; border-top: 1px solid {BORDER_DEFAULT};")
+        self.set_panel.setFixedHeight(124)
+        self.set_panel.setObjectName("wl_setPanel")
+        self.set_panel.setAttribute(Qt.WA_StyledBackground, True)
+        self.set_panel.setStyleSheet(f"#wl_setPanel {{ background-color: {SURFACE_1};"
+                                     f" border-top: 1px solid {BORDER_SUBTLE}; }}")
         spv = QVBoxLayout(self.set_panel)
         spv.setContentsMargins(12, 6, 12, 8)
         spv.setSpacing(4)
         set_head = QHBoxLayout(); set_head.setContentsMargins(0, 0, 0, 0)
         self.lbl_set = QLabel("Set sugerido")
-        self.lbl_set.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {TEXT_PRIMARY};")
-        set_head.addWidget(self.lbl_set)
-        set_head.addStretch()
-        hint2 = QLabel("Arrastrá para reordenar · click derecho en un nodo para anclar")
-        hint2.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
-        set_head.addWidget(hint2)
-        self.btn_export = WLSecondaryButton("Exportar")
+        self.lbl_set.setStyleSheet(f"font-weight: 600; color: {TEXT_PRIMARY};")
+        set_head.addWidget(self.lbl_set, 1)  # el título se queda con el ancho libre
+        # La ayuda va en un globo y no al lado del título: con poco ancho se pisaban.
+        ayuda = "Arrastrá las tarjetas para reordenar · clic derecho en un nodo para anclarlo o sacarlo"
+        self.lbl_set.setToolTip(ayuda)
+        self.lbl_set.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.btn_export = WLSecondaryButton("Exportar", icon=Icons.EXPORT)
         self.btn_export.setToolTip("Exportar el set a M3U8 o rekordbox XML")
         self.btn_export.clicked.connect(self._on_export)
         set_head.addWidget(self.btn_export)
         spv.addLayout(set_head)
         self.set_list = SetListWidget()
-        self.set_list.setFixedHeight(64)
+        self.set_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.set_list.customContextMenuRequested.connect(self._on_step_context)
+        self.set_list.setFixedHeight(74)
         self.set_list.setItemDelegate(StepDelegate(self.set_list, self._track_index.get))
         self.set_list.setStyleSheet("QListWidget { background: transparent; border: none; outline: none; }")
         self.set_list.reordered.connect(self._on_steps_reordered)
@@ -629,6 +664,22 @@ class GraphWorkspace(BaseWorkspace):
             self.track_list.addItem(item)
             self._list_items[t["id"]] = item
         self.lbl_stats.setText(f"0 en el mapa · {len(analyzable)} disponibles")
+
+    def forget_tracks(self, track_ids: list):
+        """Saca del mapa y de la lista pistas que ya no están en la librería."""
+        if not self._populated:
+            return  # la lista se arma al abrir la pantalla, ya sin ellas
+        for tid in track_ids:
+            if tid in self._selected_ids:
+                self._toggle_track(tid)
+            item = self._list_items.pop(tid, None)
+            if item is not None:
+                self.track_list.takeItem(self.track_list.row(item))
+            self._track_index.pop(tid, None)
+            self._anchors = {rol: t for rol, t in self._anchors.items() if t != tid}
+        self.lbl_stats.setText(
+            f"{len(self._selected_ids)} en el mapa · {len(self._track_index)} disponibles"
+        )
 
     def _on_compat_toggle(self, on: bool):
         self._compat_only = on
@@ -956,6 +1007,9 @@ class GraphWorkspace(BaseWorkspace):
         a_peak = menu.addAction("Fijar como pico")
         menu.addSeparator()
         a_clear = menu.addAction("Quitar ancla")
+        a_clear.setEnabled(node_id in self._anchors.values())
+        menu.addSeparator()
+        a_remove = menu.addAction(icon(Icons.CLOSE, TEXT_SECONDARY, 16), "Sacar del mapa\tSupr")
         act = menu.exec(screen_pos)
         if act == a_start:
             self._set_anchor("start", node_id)
@@ -965,6 +1019,53 @@ class GraphWorkspace(BaseWorkspace):
             self._set_anchor("peak", node_id)
         elif act == a_clear:
             self._clear_anchor(node_id)
+        elif act == a_remove:
+            self.remove_from_map([node_id])
+
+    def remove_from_map(self, track_ids: list):
+        """Saca pistas del mapa (y del set, si hay uno armado) sin tocar el
+        resto. Antes la única forma era un doble clic en la lista que no estaba
+        explicado en ningún lado, o vaciar el mapa entero."""
+        quitadas = [tid for tid in track_ids if tid in self._selected_ids]
+        if not quitadas:
+            return
+        for tid in quitadas:
+            self._selected_ids.remove(tid)
+            self._anchors = {rol: t for rol, t in self._anchors.items() if t != tid}
+            item = self._list_items.get(tid)
+            if item:
+                item.setData(_ONMAP_ROLE, False)
+        if self._selected_track and self._selected_track.get("id") in quitadas:
+            self._selected_track = None
+            self._restore_list_order()
+            self._apply_filters()
+        self._rebuild_graph()  # si hay un set armado, se rearma ahí adentro
+
+    def _on_list_context(self, pos):
+        item = self.track_list.itemAt(pos)
+        if item is None:
+            return
+        from PySide6.QtWidgets import QMenu  # noqa: PLC0415
+        tid = item.data(_ID_ROLE)
+        menu = QMenu(self)
+        if tid in self._selected_ids:
+            accion = menu.addAction(icon(Icons.CLOSE, TEXT_SECONDARY, 16), "Sacar del mapa")
+            accion.triggered.connect(lambda: self.remove_from_map([tid]))
+        else:
+            accion = menu.addAction(icon(Icons.PLUS, TEXT_SECONDARY, 16), "Sumar al mapa")
+            accion.triggered.connect(lambda: self._toggle_track(tid))
+        menu.exec(self.track_list.viewport().mapToGlobal(pos))
+
+    def _on_step_context(self, pos):
+        item = self.set_list.itemAt(pos)
+        if item is None:
+            return
+        from PySide6.QtWidgets import QMenu  # noqa: PLC0415
+        tid = item.data(_STEP_ID)
+        menu = QMenu(self)
+        accion = menu.addAction(icon(Icons.CLOSE, TEXT_SECONDARY, 16), "Sacar del set y del mapa")
+        accion.triggered.connect(lambda: self.remove_from_map([tid]))
+        menu.exec(self.set_list.viewport().mapToGlobal(pos))
 
     def _set_anchor(self, role: str, node_id: str):
         self._anchors = {r: i for r, i in self._anchors.items() if i != node_id}
@@ -1022,6 +1123,16 @@ class GraphWorkspace(BaseWorkspace):
             self._order_items.append(line)
             a.order_edges.append(line)
             b.order_edges.append(line)
+
+    def resizeEvent(self, event):
+        """Barra compacta cuando falta lugar (ventana chica o panel de detalles
+        abierto): sin las palabras del deslizador y "Armar set" sólo con icono."""
+        super().resizeEvent(event)
+        compacta = self.width() < 860
+        for etiqueta in self._lam_labels:
+            etiqueta.setVisible(not compacta)
+        self.btn_build.setText("" if self.width() < 720 else "Armar set")
+        self.event_combo.setMinimumWidth(130 if compacta else 170)
 
     def _update_set_label(self, gs):
         self.lbl_set.setText(

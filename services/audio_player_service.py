@@ -25,6 +25,11 @@ class AudioPlayerService(QObject):
     playback_position_changed = Signal(int)  # ms
     playback_duration_changed = Signal(int)  # ms
     playback_error = Signal(str)            # human-readable message
+    # Qué se pidió reproducir: key, título, subtítulo, si es un archivo local.
+    # Se emite al pedirlo, antes de que suene: una vista previa tarda unos
+    # segundos en resolverse y la barra del reproductor tiene que mostrar qué
+    # está cargando.
+    now_playing_changed = Signal(str, str, str, bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -32,6 +37,7 @@ class AudioPlayerService(QObject):
         self._audio_output = QAudioOutput(self)
         self._player.setAudioOutput(self._audio_output)
         self._current_key: str | None = None
+        self._current_is_local = False
 
         self._player.positionChanged.connect(lambda ms: self.playback_position_changed.emit(int(ms)))
         self._player.durationChanged.connect(lambda ms: self.playback_duration_changed.emit(int(ms)))
@@ -42,40 +48,60 @@ class AudioPlayerService(QObject):
     # Public API
     # ------------------------------------------------------------------
 
-    def play_local_file(self, path: str) -> None:
+    def play_local_file(self, path: str, title: str = "", subtitle: str = "") -> None:
         self.stop()
         self._current_key = path
+        self._current_is_local = True
+        self.now_playing_changed.emit(path, title, subtitle, True)
         self._player.setSource(QUrl.fromLocalFile(path))
         self._player.play()
 
-    def play_url(self, url: str) -> None:
+    def play_url(self, url: str, title: str = "", subtitle: str = "") -> None:
         self.stop()
         self._current_key = url
+        self._current_is_local = False
+        self.now_playing_changed.emit(url, title, subtitle, False)
         self.resolving_stream.emit(url)
         worker = StreamResolveWorker(url)
         worker.signals.resolved.connect(self._on_stream_resolved)
         worker.signals.failed.connect(self._on_stream_resolve_failed)
         QThreadPool.globalInstance().start(worker)
 
-    def toggle_play_pause_for(self, key: str | None, is_local: bool) -> None:
+    def toggle_play_pause_for(self, key: str | None, is_local: bool,
+                              title: str = "", subtitle: str = "") -> None:
         if not key:
             return
         if key == self._current_key and self._player.source().toString():
-            if self.is_playing():
-                self.pause()
-            else:
-                self._player.play()
+            self.toggle_current()
             return
         if is_local:
-            self.play_local_file(key)
+            self.play_local_file(key, title, subtitle)
         else:
-            self.play_url(key)
+            self.play_url(key, title, subtitle)
+
+    def toggle_current(self) -> None:
+        """Play/pausa de lo que esté cargado (el botón de la barra)."""
+        if not self._player.source().toString():
+            return
+        if self.is_playing():
+            self.pause()
+        else:
+            self._player.play()
+
+    def volume(self) -> int:
+        return round(self._audio_output.volume() * 100)
+
+    def duration_ms(self) -> int:
+        return int(self._player.duration())
 
     def pause(self) -> None:
         self._player.pause()
 
     def stop(self) -> None:
         self._player.stop()
+        # Soltar la fuente cierra el archivo: con el archivo abierto, Windows
+        # no deja moverlo ni mandarlo a la Papelera.
+        self._player.setSource(QUrl())
         self._current_key = None
         self.playback_stopped.emit()
 
@@ -117,4 +143,8 @@ class AudioPlayerService(QObject):
         if state == QMediaPlayer.PlaybackState.PlayingState and self._current_key:
             self.playback_started.emit(self._current_key)
         elif state == QMediaPlayer.PlaybackState.PausedState:
+            self.playback_paused.emit()
+        elif state == QMediaPlayer.PlaybackState.StoppedState and self._current_key:
+            # Terminó el tema: para la interfaz es lo mismo que una pausa (el
+            # botón vuelve a play), pero lo cargado sigue siendo este tema.
             self.playback_paused.emit()

@@ -13,9 +13,8 @@ from PySide6.QtCore import Qt, Signal
 
 from ui.workspaces.base_workspace import BaseWorkspace
 from ui.theme.icons import Icons
-from ui.theme.colors import TEXT_SECONDARY, TEXT_MUTED, PRIMARY_ORANGE, BORDER_SUBTLE
 from ui.components.tables import WLTrackTable
-from ui.components.buttons import WLPrimaryButton
+from ui.components.empty_state import WLEmptyState
 
 
 class LibraryWorkspace(BaseWorkspace):
@@ -64,101 +63,56 @@ class LibraryWorkspace(BaseWorkspace):
         table_layout.setContentsMargins(0, 0, 0, 0)
         table_layout.setSpacing(0)
         
-        # Library Header
+        # Encabezado: el título de la sección ya está en la toolbar; acá va
+        # cuánto hay y las acciones sobre la librería.
         self.header_widget = QWidget()
         self.header_widget.setObjectName("wl_libraryHeader")
-        self.header_widget.setStyleSheet(f"background-color: transparent; border-bottom: 1px solid {BORDER_SUBTLE};")
         header_layout = QHBoxLayout(self.header_widget)
-        header_layout.setContentsMargins(16, 8, 16, 8)
-        
-        self.lbl_library_title = QLabel("Librería Local")
-        self.lbl_library_title.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {TEXT_PRIMARY};")
+        header_layout.setContentsMargins(24, 14, 16, 10)
+        header_layout.setSpacing(8)
+
+        self.lbl_library_title = QLabel("")
+        self.lbl_library_title.setObjectName("wl_caption")
         header_layout.addWidget(self.lbl_library_title)
-        
         header_layout.addStretch()
 
         from ui.components.buttons import WLSecondaryButton
-        self.btn_analyze = WLSecondaryButton("Analizar biblioteca")
-        self.btn_analyze.setToolTip("Detecta BPM y tonalidad (Camelot) de tus pistas")
+        self.btn_analyze = WLSecondaryButton("Analizar librería", icon=Icons.REFRESH)
+        self.btn_analyze.setToolTip("Detecta BPM, tonalidad (Camelot) y energía de tus pistas")
         header_layout.addWidget(self.btn_analyze)
 
-        self.btn_toggle_panel = WLIconButton(Icons.INFO)
-        self.btn_toggle_panel.setToolTip("Mostrar/Ocultar Panel de Información")
+        self.btn_toggle_panel = WLIconButton(Icons.PANEL, tooltip="Mostrar u ocultar el panel de detalles")
         self.btn_toggle_panel.setCheckable(True)
         header_layout.addWidget(self.btn_toggle_panel)
-        
+
         table_layout.addWidget(self.header_widget)
-        
+
         self.table = WLTrackTable()
         table_layout.addWidget(self.table)
         self.stack.addWidget(self.page_table)
 
-        # 2. Empty State: Loading
-        self.page_loading = self._build_empty_state(
-            icon=Icons.PENDING,
-            title="Preparando Librería",
-            subtitle="Cargando pistas y metadatos...",
-            action_text=""
+        self.page_loading = WLEmptyState(
+            Icons.PENDING, "Cargando la librería", "Leyendo pistas y metadatos…"
         )
-        self.page_loading.findChild(QLabel, "wl_icon_label").setStyleSheet(f"font-size: 64px; color: {PRIMARY_ORANGE};")
         self.stack.addWidget(self.page_loading)
 
-        # 3. Empty State: First-Time Onboarding
-        self.page_onboarding = self._build_empty_state(
-            icon=Icons.LIBRARY,
-            title="Te damos la bienvenida a WaveLoad",
-            subtitle="El centro de operaciones de tu colección musical.\nPara empezar, importa tu librería existente o descarga nuevas pistas.",
-            action_text="Importar Colección"
+        self.page_onboarding = WLEmptyState(
+            Icons.LIBRARY,
+            "Tu librería está vacía",
+            "Importá la música que ya tenés o descargá pistas nuevas desde Descargas. "
+            "WaveLoad analiza BPM, tonalidad y energía de cada una.",
+            action_text="Importar música",
+            action_icon=Icons.IMPORT,
         )
-        # We'll re-bind the action button for onboarding later
+        self.action_btn = self.page_onboarding.action_btn
         self.stack.addWidget(self.page_onboarding)
 
-        # 4. Empty State: No Search Results
-        self.page_empty_search = self._build_empty_state(
-            icon=Icons.SEARCH,
-            title="Sin Resultados",
-            subtitle="No se encontraron pistas que coincidan con tu búsqueda.",
-            action_text=""
+        self.page_empty_search = WLEmptyState(
+            Icons.SEARCH, "Sin resultados", "Ninguna pista coincide con la búsqueda."
         )
         self.stack.addWidget(self.page_empty_search)
 
-        # Initialize
         self.show_loading()
-
-    def _build_empty_state(self, icon: str, title: str, subtitle: str, action_text: str) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(16)
-
-        icon_label = QLabel(icon)
-        icon_label.setObjectName("wl_icon_label")
-        icon_label.setStyleSheet(f"font-size: 64px; color: {TEXT_MUTED};")
-        icon_label.setAlignment(Qt.AlignCenter)
-
-        title_label = QLabel(title)
-        title_label.setObjectName("wl_sectionTitle")
-        title_label.setAlignment(Qt.AlignCenter)
-
-        subtitle_label = QLabel(subtitle)
-        subtitle_label.setStyleSheet(f"font-size: 14px; color: {TEXT_SECONDARY};")
-        subtitle_label.setAlignment(Qt.AlignCenter)
-        
-        layout.addStretch()
-        layout.addWidget(icon_label)
-        layout.addWidget(title_label)
-        layout.addWidget(subtitle_label)
-
-        if action_text:
-            btn_layout = QVBoxLayout()
-            btn_layout.setAlignment(Qt.AlignCenter)
-            self.action_btn = WLPrimaryButton(action_text)
-            self.action_btn.setFixedWidth(200)
-            btn_layout.addWidget(self.action_btn)
-            layout.addLayout(btn_layout)
-
-        layout.addStretch()
-        return page
 
     def _connect_signals(self):
         # Keyboard navigation and selection triggers context panel updates
@@ -179,7 +133,7 @@ class LibraryWorkspace(BaseWorkspace):
             self.btn_analyze.setText(f"Analizando {done}/{total}…")
         else:
             self.btn_analyze.setEnabled(True)
-            self.btn_analyze.setText("Analizar biblioteca")
+            self.btn_analyze.setText("Analizar librería")
 
     def _on_selection_changed(self, selected, deselected):
         selected_tracks = self.table.get_selected_tracks()
@@ -201,6 +155,21 @@ class LibraryWorkspace(BaseWorkspace):
         self.table.set_tracks(tracks)
         self._update_visibility()
 
+    def _update_count(self):
+        visibles = self.table.model().rowCount()
+        if self._current_query and visibles != self._track_count:
+            texto = f"{visibles} de {self._track_count} pistas"
+        else:
+            texto = f"{self._track_count} pista{'s' if self._track_count != 1 else ''}"
+        faltantes = self.table.model().sourceModel().missing_count()
+        if faltantes:
+            texto += f"  ·  {faltantes} sin archivo"
+        self.lbl_library_title.setText(texto)
+        self.lbl_library_title.setToolTip(
+            "Pistas cuyo archivo se borró o se movió. Clic derecho para ubicarlo "
+            "o quitarlas de la librería." if faltantes else ""
+        )
+
     def get_all_track_dicts(self) -> List[Dict[str, Any]]:
         """Returns the presentation dicts currently loaded (for compatibility)."""
         return self.table.model().sourceModel()._tracks
@@ -212,6 +181,12 @@ class LibraryWorkspace(BaseWorkspace):
 
     def update_track(self, track: Dict[str, Any]):
         self.table.model().sourceModel().update_track(track)
+        self._update_count()
+
+    def remove_tracks(self, track_ids: list):
+        self.table.remove_tracks(track_ids)
+        self._track_count = self.table.model().sourceModel().rowCount()
+        self._update_visibility()
 
     def remove_track(self, track_id: str):
         self.table.model().sourceModel().remove_track(track_id)
@@ -230,6 +205,7 @@ class LibraryWorkspace(BaseWorkspace):
 
     def _update_visibility(self):
         """Determines which stacked widget page to show."""
+        self._update_count()
         if self._track_count == 0:
             self.stack.setCurrentWidget(self.page_onboarding)
         elif self.table.model().rowCount() == 0 and self._current_query:

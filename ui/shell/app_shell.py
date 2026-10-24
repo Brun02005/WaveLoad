@@ -37,21 +37,24 @@ class AppShell(QWidget):
 
     def _build_layout(self):
         """Constructs the 5-zone layout."""
-        # Main layout is vertical (Toolbar on top, rest below)
-        main_layout = QVBoxLayout(self)
+        # Sidebar de alto completo a la izquierda; a la derecha, la toolbar
+        # arriba y el contenido abajo. Así la marca del sidebar queda alineada
+        # con la toolbar en vez de quedar debajo de ella.
+        main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
+        main_layout.addWidget(self.sidebar)
 
-        # Add top toolbar
-        main_layout.addWidget(self.toolbar)
+        right = QVBoxLayout()
+        self._right = right
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(0)
+        right.addWidget(self.toolbar)
+        main_layout.addLayout(right, 1)
 
-        # The rest is a horizontal layout (Sidebar | Main Content Splitter)
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
-
-        # Add fixed-width sidebar
-        body_layout.addWidget(self.sidebar)
 
         # Create a vertical splitter for (Central+Right) vs (Bottom)
         self.v_splitter = QSplitter(Qt.Vertical)
@@ -77,8 +80,13 @@ class AppShell(QWidget):
         # Add the complete split view to the body
         body_layout.addWidget(self.v_splitter, 1)
 
-        # Add the body layout to main vertical layout
-        main_layout.addLayout(body_layout, 1)
+        right.addLayout(body_layout, 1)
+
+    def set_player(self, audio_player) -> None:
+        """Agrega la barra del reproductor al pie de la columna de contenido."""
+        from ui.shell.player_bar import PlayerBar  # noqa: PLC0415
+        self.player_bar = PlayerBar(audio_player, self)
+        self._right.addWidget(self.player_bar)
 
     def register_workspace(self, name: str, widget: QWidget):
         """Add a workspace module to the central stack."""

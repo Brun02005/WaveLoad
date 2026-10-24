@@ -5,7 +5,6 @@ Dialog components for WaveLoad 5.
 """
 
 from PySide6.QtWidgets import QMessageBox
-from ui.theme.icons import Icons
 
 
 class WLConfirmDialog(QMessageBox):
@@ -27,4 +26,4 @@ class WLConfirmDialog(QMessageBox):
 def show_error_dialog(parent, title: str, message: str):
     """Helper to show a standard error dialog."""
     # We prefix with the error icon just in case the OS dialog icon isn't clear enough
-    QMessageBox.critical(parent, title, f"{Icons.ERROR} {message}")
+    QMessageBox.critical(parent, title, message)

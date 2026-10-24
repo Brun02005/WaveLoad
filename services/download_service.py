@@ -18,12 +18,14 @@ class DownloadService:
         url: str, 
         output_template: str, 
         audio_quality: str, 
-        progress_hook: Callable[[dict], None]
+        progress_hook: Callable[[dict], None],
+        use_cookies: bool = True,
     ):
         """
         Executes the yt-dlp download process.
         """
-        cookie_file = cookie_service.get_cookie_file()
+        # Con las cookies apagadas en Ajustes no se toca ningún navegador.
+        cookie_file = cookie_service.get_cookie_file() if use_cookies else None
         
         opts = {
             "format": "bestaudio/best",

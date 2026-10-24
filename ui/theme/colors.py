@@ -21,11 +21,17 @@ Usage:
 ACCENT = "#16BEC6"
 """Primary accent (teal/cyan) — primary actions, active nav, focus."""
 
-ACCENT_HOVER = "#12A3AB"
+ACCENT_HOVER = "#3CCDD3"
 """Hover state for accent interactive elements."""
 
-ACCENT_MUTED = "#0C2B2E"
+ACCENT_MUTED = "#0E2A2D"
 """Muted accent background — active-nav pill, disabled primary button."""
+
+ACCENT_SOFT = "rgba(22, 190, 198, 0.12)"
+"""Fondo translúcido de acento (QSS): navegación activa, selección."""
+
+ACCENT_LINE = "rgba(22, 190, 198, 0.45)"
+"""Borde de acento suave (QSS): foco de campos."""
 
 # Backward-compatible aliases: existing components/styles import these names.
 # The value is now teal, not green.
@@ -33,13 +39,13 @@ PRIMARY_GREEN = ACCENT
 PRIMARY_GREEN_HOVER = ACCENT_HOVER
 PRIMARY_GREEN_MUTED = ACCENT_MUTED
 
-PRIMARY_ORANGE = "#FF9F43"
+PRIMARY_ORANGE = "#E8A13A"
 """Processing, Queue, Background Operations, Metadata Analysis."""
 
 PRIMARY_ORANGE_HOVER = "#E08C3A"
 """Hover state for orange interactive elements."""
 
-PRIMARY_RED = "#FF4757"
+PRIMARY_RED = "#F2545B"
 """Errors, Failed Downloads, Destructive Actions, Critical Warnings."""
 
 PRIMARY_RED_HOVER = "#E03E4E"
@@ -52,22 +58,22 @@ PRIMARY_RED_HOVER = "#E03E4E"
 # Ordered from deepest/darkest to most elevated/lightest.
 # Use these to create depth through elevation rather than flat black.
 
-SURFACE_BASE = "#0D0E10"
+SURFACE_BASE = "#0B0C0E"
 """Deepest background — application window, behind all content."""
 
-SURFACE_1 = "#131517"
+SURFACE_1 = "#101113"
 """Sidebar, bottom workspace, recessed areas."""
 
-SURFACE_2 = "#1A1C1F"
+SURFACE_2 = "#15161A"
 """Main workspace background, primary content area."""
 
-SURFACE_3 = "#222528"
+SURFACE_3 = "#1C1E22"
 """Cards, panels, elevated containers, input backgrounds."""
 
-SURFACE_4 = "#2A2D31"
+SURFACE_4 = "#24272C"
 """Hover states on cards, secondary elevated elements."""
 
-SURFACE_5 = "#333639"
+SURFACE_5 = "#2D3036"
 """Highest elevation — tooltips, popovers, active dropdowns."""
 
 
@@ -75,13 +81,13 @@ SURFACE_5 = "#333639"
 # Border Colors
 # ---------------------------------------------------------------------------
 
-BORDER_SUBTLE = "#1F2225"
+BORDER_SUBTLE = "#1D1F23"
 """Barely-visible borders for section separation."""
 
-BORDER_DEFAULT = "#2A2D31"
+BORDER_DEFAULT = "#272A2F"
 """Standard borders on cards, inputs, panels."""
 
-BORDER_STRONG = "#3A3D42"
+BORDER_STRONG = "#363A40"
 """High-contrast borders for focus states, important separators."""
 
 BORDER_FOCUS = PRIMARY_GREEN
@@ -92,13 +98,13 @@ BORDER_FOCUS = PRIMARY_GREEN
 # Text Colors
 # ---------------------------------------------------------------------------
 
-TEXT_PRIMARY = "#F0F1F2"
+TEXT_PRIMARY = "#ECEDEF"
 """Primary text — headings, body text, labels."""
 
-TEXT_SECONDARY = "#9AA1A9"
+TEXT_SECONDARY = "#9CA2AA"
 """Secondary text — descriptions, helper text, metadata."""
 
-TEXT_MUTED = "#5A5E64"
+TEXT_MUTED = "#6A7078"
 """Muted text — placeholders, disabled labels, captions."""
 
 TEXT_INVERSE = "#0D0E10"
@@ -118,13 +124,13 @@ TEXT_RED = PRIMARY_RED
 # Status / Indicator Colors
 # ---------------------------------------------------------------------------
 
-STATUS_VALID = "#2EBD59"
+STATUS_VALID = "#3FB97A"
 """Validated, confirmed, ready state (LED indicators)."""
 
-STATUS_DUPLICATE = "#E67E22"
+STATUS_DUPLICATE = "#E8A13A"
 """Duplicate detected (LED indicators)."""
 
-STATUS_ERROR = "#F53B57"
+STATUS_ERROR = "#F2545B"
 """Error, invalid, failed (LED indicators)."""
 
 STATUS_PENDING = "#6C757D"
@@ -134,6 +140,13 @@ STATUS_INFO = "#5B8DEF"
 """Informational, neutral highlights, links."""
 
 
+DANGER_SOFT = "rgba(242, 84, 91, 0.12)"
+"""Fondo translúcido para acciones destructivas en hover (QSS)."""
+
+DANGER_LINE = "rgba(242, 84, 91, 0.40)"
+"""Borde de acciones destructivas (QSS)."""
+
+
 # ---------------------------------------------------------------------------
 # Scrollbar Colors
 # ---------------------------------------------------------------------------
@@ -141,10 +154,10 @@ STATUS_INFO = "#5B8DEF"
 SCROLLBAR_TRACK = SURFACE_BASE
 """Scrollbar track background."""
 
-SCROLLBAR_HANDLE = "#333639"
+SCROLLBAR_HANDLE = "#2D3036"
 """Scrollbar handle default."""
 
-SCROLLBAR_HANDLE_HOVER = PRIMARY_GREEN
+SCROLLBAR_HANDLE_HOVER = "#454A51"
 """Scrollbar handle on hover."""
 
 

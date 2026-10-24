@@ -7,7 +7,8 @@ Panel and layout components for WaveLoad 5.
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PySide6.QtCore import Qt
 
-from ui.theme.icons import Icons
+from ui.theme.colors import TEXT_SECONDARY
+from ui.theme.icons import Icons, pixmap
 
 
 class WLCollapsiblePanel(QWidget):
@@ -35,9 +36,10 @@ class WLCollapsiblePanel(QWidget):
         header_layout.setContentsMargins(10, 0, 10, 0)
         header_layout.setSpacing(6)
 
-        self.arrow_label = QLabel(Icons.ARROW_RIGHT)
+        self.arrow_label = QLabel()
         self.arrow_label.setObjectName("wl_arrowLabel")
-        self.arrow_label.setFixedWidth(12)
+        self.arrow_label.setFixedWidth(14)
+        self.arrow_label.setPixmap(pixmap(Icons.ARROW_RIGHT, 14, TEXT_SECONDARY))
 
         self.text_label = QLabel(self.title_text)
         self.text_label.setObjectName("wl_headerText")
@@ -65,10 +67,8 @@ class WLCollapsiblePanel(QWidget):
         self.expanded = not self.expanded
         self.content_widget.setVisible(self.expanded)
         
-        if self.expanded:
-            self.arrow_label.setText(Icons.ARROW_DOWN)
-        else:
-            self.arrow_label.setText(Icons.ARROW_RIGHT)
+        arrow = Icons.ARROW_DOWN if self.expanded else Icons.ARROW_RIGHT
+        self.arrow_label.setPixmap(pixmap(arrow, 14, TEXT_SECONDARY))
             
         self.header_btn.setChecked(self.expanded)
 
@@ -84,8 +84,9 @@ class WLInfoRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        self.label_widget = QLabel(label)
+        self.label_widget = QLabel(label.rstrip(":"))
         self.label_widget.setObjectName("wl_infoLabel")
+        self.label_widget.setFixedWidth(84)
         
         self.value_widget = QLabel(value)
         self.value_widget.setObjectName("wl_infoValue")
